@@ -16,7 +16,7 @@ module load Python/3.12.3
 module load CUDA/12.8.0
 
 # Load the necessary environment
-cd $HOME/Mainframe/TARP
+cd $HOME/Mainframe/tarp
 
 if [ ! -d "./.venv" ]; then
     # Create a virtual environment if it does not exist
