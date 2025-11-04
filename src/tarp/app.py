@@ -118,6 +118,24 @@ def main() -> None:
         masking_probability=0.15,
     )
     
+    masked_language_dataset_large = MaskedLanguageModelDataset(
+        data_source=(
+            TabularSequenceSource(source=Path("temp/data/processed/card_amr.parquet"))
+            + FastaSliceSource(
+                directory=Path("temp/data/external/sequences"),
+                metadata=Path("temp/data/processed/non_amr_genes_200000.parquet"),
+                key_column="genomic_nucleotide_accession.version",
+                start_column="start_position_on_the_genomic_accession",
+                end_column="end_position_on_the_genomic_accession",
+                orientation_column="orientation",
+            )
+        ),
+        tokenizer=Dnabert2Tokenizer(),
+        sequence_column="sequence",
+        maximum_sequence_length=512,
+        masking_probability=0.15,
+    )
+    
     triplet_dataset = MultiLabelOfflineTripletDataset(
         base_dataset=multi_label_classification_dataset,
         label_cache=Path("temp/data/cache/labels_cache.parquet"),

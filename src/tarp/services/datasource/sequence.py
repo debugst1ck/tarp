@@ -47,8 +47,24 @@ class SequenceDataSource(ABC):
         return [self.retrieve(i) for i in indices]
 
     def __add__(self, other: "SequenceDataSource") -> "CombinationSource":
-        return CombinationSource([self, other])
-
+        """
+        Combine two data sources into one.
+        
+        :param SequenceDataSource other: The other data source to combine with.
+        :return CombinationSource: A new CombinationSource instance.
+        """
+        # If both are CombinationSource, flatten their sources
+        if isinstance(self, CombinationSource) and isinstance(other, CombinationSource):
+            return CombinationSource(self.sources + other.sources)
+        # If only self is CombinationSource, append other
+        elif isinstance(self, CombinationSource):
+            return CombinationSource(self.sources + [other])
+        # If only other is CombinationSource, prepend self
+        elif isinstance(other, CombinationSource):
+            return CombinationSource([self] + other.sources)
+        # Otherwise, create a new CombinationSource with both
+        else:
+            return CombinationSource([self, other])
 
 class TabularSequenceSource(SequenceDataSource):
     """
