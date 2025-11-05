@@ -71,16 +71,18 @@ def main() -> None:
     Console.info(f"Random seed set to {SEED}")
 
     label_columns = (
-        pl.read_csv(Path("temp/data/processed/labels.csv")).to_series().to_list()
+        pl.read_csv(Path("temp/data/cache/labels.csv")).to_series().to_list()
     )
 
     # Create dataset
-    multi_label_classification_dataset = MultiLabelClassificationDataset(
+    multilabel_classification_train = MultiLabelClassificationDataset(
         (
-            TabularSequenceSource(source=Path("temp/data/processed/card_amr.parquet"))
+            TabularSequenceSource(
+                source=Path("temp/data/processed/card_amr.train.parquet")
+            )
             + FastaSliceSource(
                 directory=Path("temp/data/external/sequences"),
-                metadata=Path("temp/data/processed/non_amr_genes_10000.parquet"),
+                metadata=Path("temp/data/processed/fine_tuning.train.parquet"),
                 key_column="genomic_nucleotide_accession.version",
                 start_column="start_position_on_the_genomic_accession",
                 end_column="end_position_on_the_genomic_accession",
@@ -100,48 +102,78 @@ def main() -> None:
         ),
     )
 
-    masked_language_dataset = MaskedLanguageModelDataset(
-        data_source=(
-            TabularSequenceSource(source=Path("temp/data/processed/card_amr.parquet"))
+    multilabel_classification_valid = MultiLabelClassificationDataset(
+        (
+            TabularSequenceSource(
+                source=Path("temp/data/processed/card_amr.valid.parquet")
+            )
             + FastaSliceSource(
                 directory=Path("temp/data/external/sequences"),
-                metadata=Path("temp/data/processed/non_amr_genes_10000.parquet"),
+                metadata=Path("temp/data/processed/fine_tuning.valid.parquet"),
                 key_column="genomic_nucleotide_accession.version",
                 start_column="start_position_on_the_genomic_accession",
                 end_column="end_position_on_the_genomic_accession",
                 orientation_column="orientation",
             )
         ),
-        tokenizer=Dnabert2Tokenizer(),
+        Dnabert2Tokenizer(),
         sequence_column="sequence",
+        label_columns=label_columns,
         maximum_sequence_length=512,
-        masking_probability=0.15,
-    )
-    
-    masked_language_dataset_large = MaskedLanguageModelDataset(
-        data_source=(
-            TabularSequenceSource(source=Path("temp/data/processed/card_amr.parquet"))
-            + FastaSliceSource(
-                directory=Path("temp/data/external/sequences"),
-                metadata=Path("temp/data/processed/non_amr_genes_200000.parquet"),
-                key_column="genomic_nucleotide_accession.version",
-                start_column="start_position_on_the_genomic_accession",
-                end_column="end_position_on_the_genomic_accession",
-                orientation_column="orientation",
-            )
-        ),
-        tokenizer=Dnabert2Tokenizer(),
-        sequence_column="sequence",
-        maximum_sequence_length=512,
-        masking_probability=0.15,
-    )
-    
-    triplet_dataset = MultiLabelOfflineTripletDataset(
-        base_dataset=multi_label_classification_dataset,
-        label_cache=Path("temp/data/cache/labels_cache.parquet"),
     )
 
-    label_cache = pl.read_parquet(Path("temp/data/cache/labels_cache.parquet"))
+    masked_language_dataset_train = MaskedLanguageModelDataset(
+        data_source=(
+            FastaSliceSource(
+                directory=Path("temp/data/external/sequences"),
+                metadata=Path("temp/data/processed/pre_training.parquet"),
+                key_column="genomic_nucleotide_accession.version",
+                start_column="start_position_on_the_genomic_accession",
+                end_column="end_position_on_the_genomic_accession",
+                orientation_column="orientation",
+            )
+        ),
+        tokenizer=Dnabert2Tokenizer(),
+        sequence_column="sequence",
+        maximum_sequence_length=512,
+        masking_probability=0.15,
+        augmentation=CombinationTechnique(
+            [
+                RandomMutation(),
+                InsertionDeletion(),
+                ReverseComplement(0.5),
+            ]
+        ),
+    )
+
+    masked_language_dataset_valid = MaskedLanguageModelDataset(
+        data_source=(
+            FastaSliceSource(
+                directory=Path("temp/data/external/sequences"),
+                metadata=Path("temp/data/processed/fine_tuning.valid.parquet"),
+                key_column="genomic_nucleotide_accession.version",
+                start_column="start_position_on_the_genomic_accession",
+                end_column="end_position_on_the_genomic_accession",
+                orientation_column="orientation",
+            )
+        ),
+        tokenizer=Dnabert2Tokenizer(),
+        sequence_column="sequence",
+        maximum_sequence_length=512,
+        masking_probability=0.15,
+    )
+
+    triplet_dataset_train = MultiLabelOfflineTripletDataset(
+        base_dataset=multilabel_classification_train,
+        label_cache=Path("temp/data/cache/labels_cache_train.parquet"),
+    )
+
+    triplet_dataset_valid = MultiLabelOfflineTripletDataset(
+        base_dataset=multilabel_classification_valid,
+        label_cache=Path("temp/data/cache/labels_cache_valid.parquet"),
+    )
+
+    label_cache = pl.read_parquet(Path("temp/data/cache/labels_cache_train.parquet"))
     label_tensor = torch.tensor(label_cache.select(label_columns).to_numpy())
 
     class_counts = label_tensor.sum(dim=0)
@@ -164,26 +196,16 @@ def main() -> None:
         )
     )
 
-    # Make a subset of the dataset for quick testing
-    indices = list(range(len(multi_label_classification_dataset)))
-    train_indices, temp_indices = train_test_split(
-        indices, test_size=0.2, random_state=SEED
-    )
-    valid_indices, test_indices = train_test_split(
-        temp_indices, test_size=0.5, random_state=SEED
-    )
-
     encoder = TransformerEncoder(
-        vocabulary_size=multi_label_classification_dataset.tokenizer.vocab_size,
+        vocabulary_size=multilabel_classification_train.tokenizer.vocab_size,
         embedding_dimension=TransformerConfig.embedding_dimension,
         hidden_dimension=TransformerConfig.hidden_dimension,
-        padding_id=multi_label_classification_dataset.tokenizer.pad_token_id,
+        padding_id=multilabel_classification_train.tokenizer.pad_token_id,
         number_of_layers=TransformerConfig.number_of_layers,
         number_of_heads=TransformerConfig.number_of_heads,
         dropout=TransformerConfig.dropout,
     )
-    
-    
+
     # encoder = HyenaEncoder(
     #     vocabulary_size=multi_label_classification_dataset.tokenizer.vocab_size,
     #     embedding_dimension=HyenaConfig.embedding_dimension,
@@ -204,7 +226,7 @@ def main() -> None:
 
     language_model = LanguageModel(
         encoder=encoder,
-        vocabulary_size=multi_label_classification_dataset.tokenizer.vocab_size,
+        vocabulary_size=masked_language_dataset_train.tokenizer.vocab_size,
     )
 
     Console.info(f"Training {classification_model.encoder.__class__.__name__} model")
@@ -239,34 +261,33 @@ def main() -> None:
             },
         ]
     )
-    
+
     Console.info("Starting masked language model training")
-    Console.debug(f"Vocabulary size: {multi_label_classification_dataset.tokenizer.vocab_size}")
+    Console.debug(
+        f"Vocabulary size: {masked_language_dataset_train.tokenizer.vocab_size}"
+    )
     MaskedLanguageModelTrainer(
         model=language_model,
-        train_dataset=Subset(masked_language_dataset, train_indices),
-        valid_dataset=Subset(masked_language_dataset, valid_indices),
+        train_dataset=masked_language_dataset_train,
+        valid_dataset=masked_language_dataset_valid,
         optimizer=optimizer_language,
-        scheduler=CosineAnnealingWarmRestarts(
-            optimizer_language, T_0=5, T_mult=2
-        ),
+        scheduler=CosineAnnealingWarmRestarts(optimizer_language, T_0=5, T_mult=2),
         device=device,
         epochs=20,
         num_workers=4,
         batch_size=64,
         accumulation_steps=4,
         persistent_workers=persistent_workers,
-        vocabulary_size=multi_label_classification_dataset.tokenizer.vocab_size,
+        vocabulary_size=masked_language_dataset_train.tokenizer.vocab_size,
     ).fit()
-    
-    
+
     multi_triplet_optimizer = AdamW(
         triplet_model.parameters(), lr=2e-5, weight_decay=1e-3
     )
     OfflineTripletMetricTrainer(
         model=triplet_model,
-        train_dataset=Subset(triplet_dataset, train_indices),
-        valid_dataset=Subset(triplet_dataset, valid_indices),
+        train_dataset=triplet_dataset_train,
+        valid_dataset=triplet_dataset_valid,
         optimizer=multi_triplet_optimizer,
         scheduler=CosineAnnealingWarmRestarts(multi_triplet_optimizer, T_0=3, T_mult=2),
         device=device,
@@ -276,7 +297,6 @@ def main() -> None:
         accumulation_steps=4,
         persistent_workers=persistent_workers,
     ).fit()
-
 
     Console.info("Starting classification model training")
     optimizer_classification = AdamW(
@@ -295,8 +315,8 @@ def main() -> None:
     )
     trainer = MultiLabelClassificationTrainer(
         model=classification_model,
-        train_dataset=Subset(multi_label_classification_dataset, train_indices),
-        valid_dataset=Subset(multi_label_classification_dataset, valid_indices),
+        train_dataset=multilabel_classification_train,
+        valid_dataset=multilabel_classification_valid,
         optimizer=optimizer_classification,
         scheduler=CosineAnnealingWarmRestarts(
             optimizer_classification, T_0=5, T_mult=2
