@@ -5,36 +5,11 @@ from array import array
 import sys
 from typing import Optional
 
-from abc import ABC, abstractmethod
-
-# Base Augmentation Technique
-class AugmentationTechnique(ABC):
-
-    @abstractmethod
-    def apply(self, sequence: str) -> str:
-        """
-        Applies the augmentation technique to the input sequence.
-
-        :param str sequence: The input sequence to augment.
-        :return str: The augmented sequence.
-        """
-        return NotImplementedError
+from tarp.services.preprocessing.augmentation import Augmentation
 
 
 # Stochastic Augmentation Techniques
-
-
-class CombinationTechnique(AugmentationTechnique):
-    def __init__(self, techniques: list[AugmentationTechnique]):
-        self.techniques = techniques
-
-    def apply(self, sequence: str) -> str:
-        for technique in self.techniques:
-            sequence = technique.apply(sequence)
-        return sequence
-
-
-class ReverseComplement(AugmentationTechnique):
+class ReverseComplement(Augmentation):
     def __init__(self, complement_rate: float = 1.0):
         self.complement_rate = complement_rate
 
@@ -52,7 +27,7 @@ class ReverseComplement(AugmentationTechnique):
         return str(bio_seq.reverse_complement())
 
 
-class RandomMutation(AugmentationTechnique):
+class RandomMutation(Augmentation):
     def __init__(
         self, mutation_rate: float = 0.01, vocabulary: list[str] = ["A", "C", "G", "T"]
     ):
@@ -81,18 +56,7 @@ class RandomMutation(AugmentationTechnique):
         return array_seq.tounicode()
 
 
-class NoAugmentation(AugmentationTechnique):
-    def apply(self, sequence: str) -> str:
-        """
-        Applies no augmentation to the input sequence.
-
-        :param str sequence: The input sequence to augment.
-        :return str: The unmodified sequence.
-        """
-        return sequence
-
-
-class InsertionDeletion(AugmentationTechnique):
+class InsertionDeletion(Augmentation):
     def __init__(
         self,
         insertion_rate: float = 0.01,

@@ -1,7 +1,7 @@
 from torch import Tensor
 import torch
 
-from tarp.services.preprocessing.augmentation import NoAugmentation, AugmentationTechnique
+from tarp.services.preprocessing.augmentation import Augmentation, NoAugmentation
 from tarp.services.datasets import SequenceDataset
 from tarp.services.datasource.sequence import SequenceDataSource
 from tarp.services.tokenizers import Tokenizer
@@ -17,7 +17,7 @@ class ClassificationDataset(SequenceDataset):
         sequence_column: str,
         label_columns: list[str],
         maximum_sequence_length: int,
-        augmentation: AugmentationTechnique = NoAugmentation(),
+        augmentation: Augmentation = NoAugmentation(),
     ):
         super().__init__(
             data_source,
