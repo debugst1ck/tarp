@@ -1,18 +1,16 @@
 import datetime
 import os
+from typing import Optional
 import torch
 from pathlib import Path
+from torch import nn
 
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
-from torch.utils.data import Subset
-
-import plotly.express as px
 import polars as pl
 
 from tarp.model.backbone import Encoder
-from tarp.model.backbone.untrained.hyena import HyenaEncoder
 from tarp.model.backbone.untrained.transformer import TransformerEncoder
 
 from tarp.model.finetuning.language import LanguageModel
@@ -22,9 +20,11 @@ from tarp.model.finetuning.classification import ClassificationModel
 from tarp.services.utilities.seed import establish_random_seed
 from tarp.cli.logging import Console
 from tarp.services.tokenizers.pretrained.dnabert import Dnabert2Tokenizer
+from tarp.services.tokenizers import Tokenizer
 from tarp.services.datasource.sequence import (
     TabularSequenceSource,
     FastaSliceSource,
+    SequenceDataSource
 )
 from tarp.services.datasets.classification.multilabel import (
     MultiLabelClassificationDataset,
@@ -51,6 +51,7 @@ from tarp.services.training.trainer.language.masked import MaskedLanguageModelTr
 
 import torch.multiprocessing as mp
 
+    
 
 def pretrain(device: torch.device, encoder: Encoder) -> Encoder:
     masked_language_dataset_train = MaskedLanguageModelDataset(
@@ -129,7 +130,7 @@ def pretrain(device: torch.device, encoder: Encoder) -> Encoder:
         optimizer=optimizer_language,
         scheduler=CosineAnnealingWarmRestarts(optimizer_language, T_0=5, T_mult=2),
         device=device,
-        epochs=20,
+        epochs=15,
         num_workers=4,
         batch_size=64,
         accumulation_steps=4,

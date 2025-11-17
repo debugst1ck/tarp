@@ -9,7 +9,6 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 import polars as pl
 
 from tarp.model.backbone import Encoder
-from tarp.model.backbone.untrained.hyena import HyenaEncoder
 from tarp.model.backbone.untrained.transformer import TransformerEncoder
 
 from tarp.model.finetuning.language import LanguageModel
@@ -48,8 +47,7 @@ from tarp.services.training.trainer.language.masked import MaskedLanguageModelTr
 
 import torch.multiprocessing as mp
 
-
-def pretrain(device: torch.device, encoder: Encoder) -> Encoder:
+def pretrain(device: torch.device, encoder: Encoder) -> LanguageModel:
     masked_language_dataset_train = MaskedLanguageModelDataset(
         data_source=(
             FastaSliceSource(
@@ -118,6 +116,7 @@ def pretrain(device: torch.device, encoder: Encoder) -> Encoder:
     Console.debug(
         f"Vocabulary size: {masked_language_dataset_train.tokenizer.vocab_size}"
     )
+    
     MaskedLanguageModelTrainer(
         model=language_model,
         train_dataset=masked_language_dataset_train,
@@ -135,10 +134,10 @@ def pretrain(device: torch.device, encoder: Encoder) -> Encoder:
         vocabulary_size=masked_language_dataset_train.tokenizer.vocab_size,
     ).fit()
 
-    return language_model.encoder
+    return language_model
 
 
-def finetune(device: torch.device, encoder: Encoder) -> Encoder:
+def finetune(device: torch.device, encoder: Encoder) -> ClassificationModel:
     label_columns = (
         pl.read_csv(Path("temp/data/cache/labels.csv")).to_series().to_list()
     )
@@ -293,7 +292,7 @@ def finetune(device: torch.device, encoder: Encoder) -> Encoder:
     )
     trainer.fit()
     
-    return classification_model.encoder
+    return classification_model
 
 
 def save_model(model: torch.nn.Module, name: str, run_id: str) -> Path:
@@ -350,14 +349,32 @@ def main() -> None:
         device = torch.device("cpu")
 
     Console.info("Starting pre-training phase")
-    pretrained_encoder = pretrain(device=device, encoder=encoder)
+    llm = pretrain(device=device, encoder=encoder)
     
     Console.info("Starting fine-tuning phase")
-    finetuned_encoder = finetune(device=device, encoder=pretrained_encoder)
+    classification_model = finetune(device=device, encoder=llm.encoder)
 
     save_model(
-        model=finetuned_encoder,
+        model=classification_model.encoder,
         name="classification_model_encoder",
+        run_id=run_id,
+    )
+    
+    save_model(
+        model=classification_model.classification_head,
+        name="classification_model_head",
+        run_id=run_id,
+    )
+    
+    save_model(
+        model=llm.encoder,
+        name="language_model_encoder",
+        run_id=run_id,
+    )
+    
+    save_model(
+        model=llm.language_head,
+        name="language_model_head",
         run_id=run_id,
     )
 
