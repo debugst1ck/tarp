@@ -5,10 +5,7 @@ from typing import Optional
 
 from tarp.services.datasource.sequence import SequenceDataSource
 from tarp.services.tokenizers import Tokenizer
-from tarp.services.preprocessing.augmentation import (
-    NoAugmentation,
-    AugmentationTechnique,
-)
+from tarp.services.preprocessing.augmentation import Augmentation, NoAugmentation
 
 
 class SequenceDataset(Dataset):
@@ -18,7 +15,7 @@ class SequenceDataset(Dataset):
         tokenizer: Tokenizer,
         sequence_column: str,
         maximum_sequence_length: int,
-        augmentation: AugmentationTechnique = NoAugmentation(),
+        augmentation: Augmentation = NoAugmentation(),
     ):
         self.data_source = data_source
         self.tokenizer = tokenizer

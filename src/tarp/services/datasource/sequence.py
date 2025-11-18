@@ -293,13 +293,13 @@ class FastaSliceSource(SequenceDataSource):
         )
 
         if self.key_column not in self.df.columns:
-            raise ValueError(f"Key column {self.key_column} not found in metadata.")
+            raise ValueError(f"Key column {self.key_column} not found in {self.df.columns}.")
 
         if self.start_column not in self.df.columns:
-            raise ValueError(f"Start column {self.start_column} not found in metadata.")
+            Console.warning(f"Start column {self.start_column} not found in metadata.")
 
         if self.end_column not in self.df.columns:
-            raise ValueError(f"End column {self.end_column} not found in metadata.")
+            Console.warning(f"End column {self.end_column} not found in metadata.")
 
         self._fasta_map = {p.stem: p for p in self.directory.glob("*.fasta")}
 
@@ -328,8 +328,8 @@ class FastaSliceSource(SequenceDataSource):
     def retrieve(self, index: int) -> dict:
         row = self.df.row(index, named=True)
         key = row[self.key_column]
-        start = row[self.start_column]
-        end = row[self.end_column]
+        start = row[self.start_column] if self.start_column in row else None
+        end = row[self.end_column] if self.end_column in row else None
         orientation = row.get(self.orientation_column, "+")
 
         if key not in self._fasta_map:
@@ -355,13 +355,13 @@ class FastaSliceSource(SequenceDataSource):
         results = []
         for key, group in groups.items():
             if key[0] not in self._fasta_map:
-                raise FileNotFoundError(f"No FASTA found for {key[0]}")
+                raise FileNotFoundError(f"No FASTA found for {key[0]} in {self.directory.as_posix()}")
 
             full_sequence = self._load_sequence(key[0])
 
             for row in group.rows(named=True):
-                start = row[self.start_column]
-                end = row[self.end_column]
+                start = row[self.start_column] if self.start_column in row else None
+                end = row[self.end_column] if self.end_column in row else None
                 orientation = row.get(self.orientation_column, "+")
 
                 if start is None and end is None:

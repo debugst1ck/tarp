@@ -1,9 +1,7 @@
 import datetime
 import os
-from typing import Optional
 import torch
 from pathlib import Path
-from torch import nn
 
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
@@ -19,12 +17,10 @@ from tarp.model.finetuning.classification import ClassificationModel
 
 from tarp.services.utilities.seed import establish_random_seed
 from tarp.cli.logging import Console
-from tarp.services.tokenizers.pretrained.dnabert import Dnabert2Tokenizer
-from tarp.services.tokenizers import Tokenizer
+from tarp.services.tokenizers.pretrained.character import CharacterTokenizer
 from tarp.services.datasource.sequence import (
     TabularSequenceSource,
     FastaSliceSource,
-    SequenceDataSource
 )
 from tarp.services.datasets.classification.multilabel import (
     MultiLabelClassificationDataset,
@@ -51,23 +47,21 @@ from tarp.services.training.trainer.language.masked import MaskedLanguageModelTr
 
 import torch.multiprocessing as mp
 
-    
-
-def pretrain(device: torch.device, encoder: Encoder) -> Encoder:
+def pretrain(device: torch.device, encoder: Encoder) -> LanguageModel:
     masked_language_dataset_train = MaskedLanguageModelDataset(
         data_source=(
             FastaSliceSource(
-                directory=Path("temp/data/external/sequences/nucleotides"),
+                directory=Path("temp/data/external/sequences/proteins"),
                 metadata=Path("temp/data/processed/pre_training.parquet"),
-                key_column="genomic_nucleotide_accession.version",
-                start_column="start_position_on_the_genomic_accession",
-                end_column="end_position_on_the_genomic_accession",
+                key_column="protein_accession.version",
+                start_column="?",
+                end_column="?",
                 orientation_column="orientation",
-                sequence_column="dna_sequence",
+                sequence_column="protein_sequence",
             )
         ),
-        tokenizer=Dnabert2Tokenizer(),
-        sequence_column="dna_sequence",
+        tokenizer=CharacterTokenizer(),
+        sequence_column="protein_sequence",
         maximum_sequence_length=512,
         masking_probability=0.15,
         augmentation=CompositeAugmentation(
@@ -82,17 +76,16 @@ def pretrain(device: torch.device, encoder: Encoder) -> Encoder:
     masked_language_dataset_valid = MaskedLanguageModelDataset(
         data_source=(
             FastaSliceSource(
-                directory=Path("temp/data/external/sequences/nucleotides"),
+                directory=Path("temp/data/external/sequences/proteins"),
                 metadata=Path("temp/data/processed/fine_tuning.valid.parquet"),
-                key_column="genomic_nucleotide_accession.version",
-                start_column="start_position_on_the_genomic_accession",
-                end_column="end_position_on_the_genomic_accession",
+                key_column="protein_accession.version",
+                start_column="?",
+                end_column="?",
                 orientation_column="orientation",
-                sequence_column="dna_sequence",
             )
         ),
-        tokenizer=Dnabert2Tokenizer(),
-        sequence_column="dna_sequence",
+        tokenizer=CharacterTokenizer(),
+        sequence_column="protein_sequence",
         maximum_sequence_length=512,
         masking_probability=0.15,
     )
@@ -123,6 +116,7 @@ def pretrain(device: torch.device, encoder: Encoder) -> Encoder:
     Console.debug(
         f"Vocabulary size: {masked_language_dataset_train.tokenizer.vocab_size}"
     )
+    
     MaskedLanguageModelTrainer(
         model=language_model,
         train_dataset=masked_language_dataset_train,
@@ -130,7 +124,7 @@ def pretrain(device: torch.device, encoder: Encoder) -> Encoder:
         optimizer=optimizer_language,
         scheduler=CosineAnnealingWarmRestarts(optimizer_language, T_0=5, T_mult=2),
         device=device,
-        epochs=15,
+        epochs=20,
         num_workers=4,
         batch_size=64,
         accumulation_steps=4,
@@ -140,10 +134,10 @@ def pretrain(device: torch.device, encoder: Encoder) -> Encoder:
         vocabulary_size=masked_language_dataset_train.tokenizer.vocab_size,
     ).fit()
 
-    return language_model.encoder
+    return language_model
 
 
-def finetune(device: torch.device, encoder: Encoder) -> Encoder:
+def finetune(device: torch.device, encoder: Encoder) -> ClassificationModel:
     label_columns = (
         pl.read_csv(Path("temp/data/cache/labels.csv")).to_series().to_list()
     )
@@ -151,20 +145,20 @@ def finetune(device: torch.device, encoder: Encoder) -> Encoder:
     multilabel_classification_train = MultiLabelClassificationDataset(
         (
             TabularSequenceSource(
-                source=Path("temp/data/processed/card_amr.train.parquet")
+                source=Path("temp/data/processed/card_amr.train.parquet"),
             )
             + FastaSliceSource(
-                directory=Path("temp/data/external/sequences/nucleotides"),
+                directory=Path("temp/data/external/sequences/proteins"),
                 metadata=Path("temp/data/processed/fine_tuning.train.parquet"),
-                key_column="genomic_nucleotide_accession.version",
-                start_column="start_position_on_the_genomic_accession",
-                end_column="end_position_on_the_genomic_accession",
+                key_column="protein_accession.version",
+                start_column="?",
+                end_column="?",
                 orientation_column="orientation",
-                sequence_column="dna_sequence",
+                sequence_column="protein_sequence",
             )
         ),
-        Dnabert2Tokenizer(),
-        sequence_column="dna_sequence",
+        CharacterTokenizer(),
+        sequence_column="protein_sequence",
         label_columns=label_columns,
         maximum_sequence_length=512,
         augmentation=CompositeAugmentation(
@@ -182,29 +176,29 @@ def finetune(device: torch.device, encoder: Encoder) -> Encoder:
                 source=Path("temp/data/processed/card_amr.valid.parquet")
             )
             + FastaSliceSource(
-                directory=Path("temp/data/external/sequences/nucleotides"),
+                directory=Path("temp/data/external/sequences/proteins"),
                 metadata=Path("temp/data/processed/fine_tuning.valid.parquet"),
-                key_column="genomic_nucleotide_accession.version",
-                start_column="start_position_on_the_genomic_accession",
-                end_column="end_position_on_the_genomic_accession",
+                key_column="protein_accession.version",
+                start_column="?",
+                end_column="?",
                 orientation_column="orientation",
-                sequence_column="dna_sequence",
+                sequence_column="protein_sequence",
             )
         ),
-        Dnabert2Tokenizer(),
-        sequence_column="dna_sequence",
+        CharacterTokenizer(),
+        sequence_column="protein_sequence",
         label_columns=label_columns,
         maximum_sequence_length=512,
     )
 
     triplet_dataset_train = MultiLabelOfflineTripletDataset(
         base_dataset=multilabel_classification_train,
-        label_cache=Path("temp/data/cache/labels_cache_train.parquet"),
+        label_cache=Path("temp/data/cache/protein_labels_cache_train.parquet"),
     )
 
     triplet_dataset_valid = MultiLabelOfflineTripletDataset(
         base_dataset=multilabel_classification_valid,
-        label_cache=Path("temp/data/cache/labels_cache_valid.parquet"),
+        label_cache=Path("temp/data/cache/protein_labels_cache_valid.parquet"),
     )
 
     classification_model = ClassificationModel(
@@ -254,7 +248,7 @@ def finetune(device: torch.device, encoder: Encoder) -> Encoder:
         ]
     )
     
-    label_cache = pl.read_parquet(Path("temp/data/cache/labels_cache_train.parquet"))
+    label_cache = pl.read_parquet(Path("temp/data/cache/protein_labels_cache_train.parquet"))
     label_tensor = torch.tensor(label_cache.select(label_columns).to_numpy())
 
     class_counts = label_tensor.sum(dim=0)
@@ -298,7 +292,7 @@ def finetune(device: torch.device, encoder: Encoder) -> Encoder:
     )
     trainer.fit()
     
-    return classification_model.encoder
+    return classification_model
 
 
 def save_model(model: torch.nn.Module, name: str, run_id: str) -> Path:
@@ -335,10 +329,10 @@ def main() -> None:
     Console.info(f"Random seed set to {SEED}")
 
     encoder = TransformerEncoder(
-        vocabulary_size=Dnabert2Tokenizer().vocab_size,
+        vocabulary_size=CharacterTokenizer().vocab_size,
         embedding_dimension=TransformerConfig.embedding_dimension,
         hidden_dimension=TransformerConfig.hidden_dimension,
-        padding_id=Dnabert2Tokenizer().pad_token_id,
+        padding_id=CharacterTokenizer().pad_token_id,
         number_of_layers=TransformerConfig.number_of_layers,
         number_of_heads=TransformerConfig.number_of_heads,
         dropout=TransformerConfig.dropout,
@@ -355,14 +349,32 @@ def main() -> None:
         device = torch.device("cpu")
 
     Console.info("Starting pre-training phase")
-    pretrained_encoder = pretrain(device=device, encoder=encoder)
+    llm = pretrain(device=device, encoder=encoder)
     
     Console.info("Starting fine-tuning phase")
-    finetuned_encoder = finetune(device=device, encoder=pretrained_encoder)
+    classification_model = finetune(device=device, encoder=llm.encoder)
 
     save_model(
-        model=finetuned_encoder,
+        model=classification_model.encoder,
         name="classification_model_encoder",
+        run_id=run_id,
+    )
+    
+    save_model(
+        model=classification_model.classification_head,
+        name="classification_model_head",
+        run_id=run_id,
+    )
+    
+    save_model(
+        model=llm.encoder,
+        name="language_model_encoder",
+        run_id=run_id,
+    )
+    
+    save_model(
+        model=llm.language_head,
+        name="language_model_head",
         run_id=run_id,
     )
 

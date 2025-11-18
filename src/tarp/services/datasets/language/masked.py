@@ -1,10 +1,7 @@
 from torch import Tensor
 import torch
 
-from tarp.services.preprocessing.augmentation import (
-    NoAugmentation,
-    AugmentationTechnique,
-)
+from tarp.services.preprocessing.augmentation import Augmentation, NoAugmentation
 from tarp.services.datasets import SequenceDataset
 from tarp.services.datasource.sequence import SequenceDataSource
 from tarp.services.tokenizers import Tokenizer
@@ -16,7 +13,7 @@ class MaskedLanguageModelDataset(SequenceDataset):
         tokenizer: Tokenizer,
         sequence_column: str,
         maximum_sequence_length: int,
-        augmentation: AugmentationTechnique = NoAugmentation(),
+        augmentation: Augmentation = NoAugmentation(),
         masking_probability: float = 0.15,
     ):
         super().__init__(
