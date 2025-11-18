@@ -355,7 +355,7 @@ class FastaSliceSource(SequenceDataSource):
         results = []
         for key, group in groups.items():
             if key[0] not in self._fasta_map:
-                raise FileNotFoundError(f"No FASTA found for {key[0]}")
+                raise FileNotFoundError(f"No FASTA found for {key[0]} in {self.directory.as_posix()}")
 
             full_sequence = self._load_sequence(key[0])
 
