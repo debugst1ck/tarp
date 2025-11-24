@@ -1,17 +1,13 @@
-import torch
-from torch import nn, Tensor
-from torch.utils.data import Dataset
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LRScheduler
-
 from typing import Optional
 
-from tarp.model.backbone import Encoder
-from tarp.services.training.trainer import Trainer
+import torch
+from torch import Tensor, nn
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler
+from torch.utils.data import Dataset
 
 from tarp.model.finetuning.metric.triplet import TripletMetricModel
-
-import torch.nn.functional as F
+from tarp.services.training.trainer import Trainer
 
 
 class OfflineTripletMetricTrainer(Trainer):

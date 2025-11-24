@@ -1,9 +1,8 @@
-from torch import Tensor
-
-from tarp.services.datasource.sequence import SequenceDataSource
-from tarp.services.tokenizers import Tokenizer
 from tarp.services.datasets.classification import ClassificationDataset
+from tarp.services.datasource.sequence import SequenceDataSource
 from tarp.services.preprocessing.augmentation import Augmentation, NoAugmentation
+from tarp.services.tokenizers import Tokenizer
+
 
 class MultiLabelClassificationDataset(ClassificationDataset):
     def __init__(

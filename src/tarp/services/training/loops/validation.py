@@ -1,9 +1,12 @@
-from torch.utils.data import DataLoader
-from tarp.services.training.loops import Loop
-from tqdm import tqdm
+from typing import Optional
+
 import torch
 from torch import Tensor
-from typing import Optional
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+
+from tarp.services.training.loops import Loop
+
 
 class ValidationLoop(Loop):
     def step(
@@ -15,14 +18,14 @@ class ValidationLoop(Loop):
         ):
             loss, predictions, expected = self.forward(batch)
         return loss, predictions, expected
-    
+
     def run(self, epoch: int, dataloader: DataLoader) -> dict[str, float]:
         self.context.model.eval()
         total_loss = 0.0
         all_expected, all_predictions = [], []
         loop = tqdm(
             dataloader,
-            desc=f"Validation {epoch+1}/{self.context.epochs}",
+            desc=f"Validation {epoch + 1}/{self.context.epochs}",
             unit="batch",
             colour="red",
         )

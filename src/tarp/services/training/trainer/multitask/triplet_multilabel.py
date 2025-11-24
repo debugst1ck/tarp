@@ -1,25 +1,23 @@
+from typing import Optional
+
 import torch
-from torch import nn, Tensor
-from torch.utils.data import Dataset
+import torch.nn.functional as F
+from sklearn.metrics import classification_report
+from torch import Tensor, nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
-from typing import Optional
+from torch.utils.data import Dataset
 
 from tarp.cli.logging import Console
 from tarp.model.finetuning.classification import ClassificationModel
+from tarp.services.evaluation.classification.multilabel import MultiLabelMetrics
+from tarp.services.evaluation.losses.multilabel import AsymmetricFocalLoss
 from tarp.services.training.callbacks import Callback
 from tarp.services.training.callbacks.monitoring import (
     EarlyStopping,
     LearningRateScheduler,
 )
 from tarp.services.training.trainer import Trainer
-from tarp.services.evaluation.classification.multilabel import MultiLabelMetrics
-from tarp.services.evaluation.losses.multilabel import AsymmetricFocalLoss
-from torch.nn import BCEWithLogitsLoss
-
-from sklearn.metrics import classification_report
-
-import torch.nn.functional as F
 
 
 class JointTripletClassificationTrainer(Trainer):
@@ -64,7 +62,9 @@ class JointTripletClassificationTrainer(Trainer):
         )
 
         # Emphasize on rare positives and ignore easy negatives
-        self.classification_loss = AsymmetricFocalLoss(gamma_pos=2.0, gamma_neg=2.0, class_weights=class_weights)
+        self.classification_loss = AsymmetricFocalLoss(
+            gamma_pos=2.0, gamma_neg=2.0, class_weights=class_weights
+        )
 
         self.triplet_loss = nn.TripletMarginLoss(margin=1.0)
 
@@ -87,23 +87,31 @@ class JointTripletClassificationTrainer(Trainer):
         positive = self._move_to_device(batch["positive"])
         negative = self._move_to_device(batch["negative"])
 
-        model: ClassificationModel = self.context.model
+        assert isinstance(self.context.model, ClassificationModel), (
+            f"Type check, as {type(self.context.model)} is not {ClassificationModel}"
+        )
 
         # Forward pass through encoder
-        anchor_embeddings = model.encoder.encode(
+        anchor_embeddings = self.context.model.encoder.encode(
             anchor["sequence"], anchor.get("attention_mask")
         )
-        positive_embeddings = model.encoder.encode(
+        positive_embeddings = self.context.model.encoder.encode(
             positive["sequence"], positive.get("attention_mask")
         )
-        negative_embeddings = model.encoder.encode(
+        negative_embeddings = self.context.model.encoder.encode(
             negative["sequence"], negative.get("attention_mask")
         )
 
         # Classification logits
-        anchor_logits: Tensor = model.classification_head(anchor_embeddings)
-        positive_logits: Tensor = model.classification_head(positive_embeddings)
-        negative_logits: Tensor = model.classification_head(negative_embeddings)
+        anchor_logits: Tensor = self.context.model.classification_head(
+            anchor_embeddings
+        )
+        positive_logits: Tensor = self.context.model.classification_head(
+            positive_embeddings
+        )
+        negative_logits: Tensor = self.context.model.classification_head(
+            negative_embeddings
+        )
 
         # Classification loss (multi-label)
         anchor_labels = anchor["labels"]
@@ -134,6 +142,11 @@ class JointTripletClassificationTrainer(Trainer):
         self, batch: dict[str, dict[str, Tensor]]
     ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         anchor = self._move_to_device(batch["anchor"])
+
+        assert isinstance(self.context.model, ClassificationModel), (
+            f"Type check, as {type(self.context.model)} is not {ClassificationModel}"
+        )
+
         model: ClassificationModel = self.context.model
         anchor_emb = model.encoder.encode(
             anchor["sequence"], anchor.get("attention_mask")
@@ -144,11 +157,11 @@ class JointTripletClassificationTrainer(Trainer):
 
     def compute_metrics(self, prediction, expected):
         Console.debug(
-            "Validation Classification Report:\n"
-            + classification_report(
-                torch.concat(expected, dim=0).numpy(),
-                (torch.sigmoid(torch.concat(prediction, dim=0)) > 0.5).numpy(),
-                zero_division=0,
-            )
+            f"Validation Classification Report:\n{
+                classification_report(
+                    torch.concat(expected, dim=0).numpy(),
+                    (torch.sigmoid(torch.concat(prediction, dim=0)) > 0.5).numpy(),
+                )
+            }"
         )
         return self.metrics.compute(prediction, expected)

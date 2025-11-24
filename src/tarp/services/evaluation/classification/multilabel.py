@@ -85,7 +85,7 @@ class MultiLabelMetrics:
             targets.cpu().numpy(), predictions.cpu().numpy()
         )
 
-    def _roc_auc(self, logits: Tensor, targets: Tensor) -> Optional[float]:
+    def _roc_auc(self, logits: Tensor, targets: Tensor) -> float:
         if not self.logits:
             Console.warning("ROC AUC metric expects logits, but got probabilities.")
             return float("nan")
@@ -136,7 +136,7 @@ class MultiLabelMetrics:
     # --- public interface ---
     def compute(
         self, logits: Union[Tensor, list[Tensor]], targets: Union[Tensor, list[Tensor]]
-    ) -> dict[str, Optional[float]]:
+    ) -> dict[str, float]:
         """
         Compute all metrics at once and return as dict.
         """

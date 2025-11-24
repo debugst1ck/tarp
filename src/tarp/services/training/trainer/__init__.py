@@ -1,24 +1,22 @@
 from abc import ABC, abstractmethod
+from typing import Any, Optional
+
+import torch
 from torch import Tensor, nn
 from torch.optim import Optimizer
-from torch.optim.lr_scheduler import ReduceLROnPlateau, LRScheduler
+from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader, Dataset
-import torch
-
-from typing import Optional
-
-from tarp.services.training.context import TrainerContext
-from tarp.services.training.state import TrainerState
-from tarp.services.training.loops import Loop
-from tarp.services.training.loops.validation import ValidationLoop
-from tarp.services.training.loops.training import TrainingLoop
-from tarp.services.training.callbacks import Callback
 
 from tarp.cli.logging import Console
+from tarp.services.training.callbacks import Callback
 from tarp.services.training.callbacks.monitoring import (
     EarlyStopping,
     LearningRateScheduler,
 )
+from tarp.services.training.context import TrainerContext
+from tarp.services.training.loops.training import TrainingLoop
+from tarp.services.training.loops.validation import ValidationLoop
+from tarp.services.training.state import TrainerState
 
 
 class Trainer(ABC):
@@ -81,7 +79,7 @@ class Trainer(ABC):
             batch_size=batch_size,
             shuffle=True,
             num_workers=num_workers,
-            pin_memory=True if persistent_workers == True else False,
+            pin_memory=True if persistent_workers else False,
             persistent_workers=persistent_workers,
         )
         self.validation_dataloader = DataLoader(
@@ -89,7 +87,7 @@ class Trainer(ABC):
             batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
-            pin_memory=True if persistent_workers == True else False,
+            pin_memory=True if persistent_workers else False,
             persistent_workers=persistent_workers,
         )
 
@@ -117,7 +115,7 @@ class Trainer(ABC):
 
     @abstractmethod
     def training_step(
-        self, batch: dict[str, Tensor]
+        self, batch: dict[str, Any]
     ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         """
         Perform a single training step.
@@ -130,7 +128,7 @@ class Trainer(ABC):
     @torch.no_grad()
     @abstractmethod
     def validation_step(
-        self, batch: dict[str, Tensor]
+        self, batch: dict[str, Any]
     ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         """
         Perform a single validation step.
@@ -169,7 +167,9 @@ class Trainer(ABC):
     def fit(self) -> None:
         self._execute_callbacks(Callback.on_training_start.__name__)
         for epoch in range(self.context.epochs):
-            Console.info(f"Starting epoch {epoch + 1}/{self.context.epochs} for {self.__class__.__name__}")
+            Console.info(
+                f"Starting epoch {epoch + 1}/{self.context.epochs} for {self.__class__.__name__}"
+            )
 
             self._execute_callbacks(Callback.on_epoch_start.__name__)
 

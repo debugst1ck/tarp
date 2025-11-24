@@ -1,10 +1,12 @@
+from typing import Optional
+
+import torch
 from torch import nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
-import torch
-from typing import Optional
 
 from tarp.services.training.state import TrainerState
+
 
 class TrainerContext:
     def __init__(self, state: TrainerState):
@@ -65,7 +67,7 @@ class TrainerContext:
     @property
     def current_metrics(self) -> dict[str, float]:
         return self.state.history[self.epoch]
-    
+
     @property
     def shared(self) -> dict:
         return self.state.shared

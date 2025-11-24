@@ -1,12 +1,10 @@
-from torch import Tensor
 import torch
+from torch import Tensor
 
-from tarp.services.preprocessing.augmentation import Augmentation, NoAugmentation
 from tarp.services.datasets import SequenceDataset
 from tarp.services.datasource.sequence import SequenceDataSource
+from tarp.services.preprocessing.augmentation import Augmentation, NoAugmentation
 from tarp.services.tokenizers import Tokenizer
-
-from typing import Optional
 
 
 class ClassificationDataset(SequenceDataset):

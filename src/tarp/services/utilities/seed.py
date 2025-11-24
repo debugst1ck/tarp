@@ -1,9 +1,11 @@
 # This file is for setting random seeds for reproducibility
 
-import torch
-import numpy as np
 import random
 from typing import Optional
+
+import numpy as np
+import torch
+
 
 def establish_random_seed(seed: Optional[int] = None) -> int:
     """
@@ -16,7 +18,7 @@ def establish_random_seed(seed: Optional[int] = None) -> int:
     """
     if seed is None:
         seed = random.randint(0, 2**32 - 1)
-    
+
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)

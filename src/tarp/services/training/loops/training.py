@@ -1,11 +1,12 @@
+from typing import Optional
+
+import torch
+from torch import Tensor
 from torch.utils.data import DataLoader
+from tqdm import tqdm
+
 from tarp.services.training.callbacks import Callback
 from tarp.services.training.loops import Loop
-from tqdm import tqdm
-import torch
-from torch import nn
-from typing import Optional
-from torch import Tensor
 
 
 class TrainingLoop(Loop):
@@ -28,7 +29,7 @@ class TrainingLoop(Loop):
         total_loss = 0.0
         loop = tqdm(
             dataloader,
-            desc=f"Training {epoch+1}/{self.context.epochs}",
+            desc=f"Training {epoch + 1}/{self.context.epochs}",
             unit="batch",
             colour="green",
         )

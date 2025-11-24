@@ -1,8 +1,10 @@
+from typing import Optional
+
 import torch
 from torch import nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
-from typing import Optional
+
 
 class TrainerState:
     def __init__(
@@ -31,5 +33,5 @@ class TrainerState:
 
         self.epoch = 0
         self.stop_training = False
-        
+
         self.shared: dict = shared

@@ -1,18 +1,15 @@
-from functools import lru_cache
-import torch
+from pathlib import Path
+from typing import override
 
+import polars as pl
+import torch
+from torch import Tensor
+
+from tarp.cli.logging import Console
 from tarp.services.datasets import SequenceDataset
 from tarp.services.datasets.classification.multilabel import (
     MultiLabelClassificationDataset,
 )
-from tarp.cli.logging import Console
-
-from pathlib import Path
-
-import polars as pl
-from torch import Tensor
-
-from typing import override
 
 
 class MultiLabelOfflineTripletDataset(SequenceDataset):

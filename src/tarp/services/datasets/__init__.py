@@ -1,11 +1,12 @@
-from torch import Tensor
-from torch.utils.data import Dataset
-import torch
 from typing import Optional
 
+import torch
+from torch import Tensor
+from torch.utils.data import Dataset
+
 from tarp.services.datasource.sequence import SequenceDataSource
-from tarp.services.tokenizers import Tokenizer
 from tarp.services.preprocessing.augmentation import Augmentation, NoAugmentation
+from tarp.services.tokenizers import Tokenizer
 
 
 class SequenceDataset(Dataset):

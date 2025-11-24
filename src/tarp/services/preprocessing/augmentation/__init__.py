@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 
 
 class Augmentation(ABC):
-
     @abstractmethod
     def apply(self, sequence: str) -> str:
         """
@@ -23,8 +22,8 @@ class NoAugmentation(Augmentation):
         :return str: The unmodified sequence.
         """
         return sequence
-    
-    
+
+
 class CompositeAugmentation(Augmentation):
     def __init__(self, techniques: list[Augmentation]):
         self.techniques = techniques

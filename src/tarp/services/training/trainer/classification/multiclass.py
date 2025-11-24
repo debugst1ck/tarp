@@ -1,16 +1,14 @@
-import torch
-from torch import nn, Tensor
-from torch.utils.data import Dataset
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LRScheduler
 from typing import Optional
 
-from tarp.services.training.trainer import Trainer
-from tarp.services.evaluation import Extremum
-from tarp.services.evaluation.classification.multilabel import MultiLabelMetrics
-from tarp.services.evaluation.losses.multilabel import AsymmetricFocalLoss
+import torch
+from torch import Tensor, nn
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler
+from torch.utils.data import Dataset
 
 from tarp.model.finetuning.classification import ClassificationModel
+from tarp.services.evaluation.classification.multilabel import MultiLabelMetrics
+from tarp.services.training.trainer import Trainer
 
 
 class MultiClassClassificationTrainer(Trainer):
@@ -53,12 +51,16 @@ class MultiClassClassificationTrainer(Trainer):
             use_amp=use_amp,
             accumulation_steps=accumulation_steps,
         )
-        
+
         self.criterion = self.criterion.to(device)
-        
-        self.metrics = MultiLabelMetrics()  # Reuse MultiLabelMetrics for multi-class as well
 
-    def training_step(self, batch: dict[str, Tensor]) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
+        self.metrics = (
+            MultiLabelMetrics()
+        )  # Reuse MultiLabelMetrics for multi-class as well
+
+    def training_step(
+        self, batch: dict[str, Tensor]
+    ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         inputs = batch["sequence"].to(self.context.device)
         labels = batch["labels"].to(self.context.device)
         attention_mask = batch["attention_mask"].to(self.context.device)
@@ -66,7 +68,9 @@ class MultiClassClassificationTrainer(Trainer):
         loss = self.criterion(logits, labels)
         return loss, logits.detach().cpu(), labels.detach().cpu()
 
-    def validation_step(self, batch: dict[str, Tensor]) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
+    def validation_step(
+        self, batch: dict[str, Tensor]
+    ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         inputs = batch["sequence"].to(self.context.device)
         labels = batch["labels"].to(self.context.device)
         attention_mask = batch["attention_mask"].to(self.context.device)
@@ -74,5 +78,7 @@ class MultiClassClassificationTrainer(Trainer):
         loss = self.criterion(logits, labels)
         return loss, logits.detach().cpu(), labels.detach().cpu()
 
-    def compute_metrics(self, logits, labels):
-        return self.metrics.compute(logits, labels)
+    def compute_metrics(
+        self, prediction: list[Tensor], expected: list[Tensor]
+    ) -> dict[str, float]:
+        return self.metrics.compute(prediction, expected)

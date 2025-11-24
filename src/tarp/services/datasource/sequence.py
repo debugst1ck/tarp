@@ -1,11 +1,12 @@
-import polars as pl
-from pathlib import Path
-from typing import Optional
-from Bio import SeqIO
 from abc import ABC, abstractmethod
 from functools import lru_cache
-from Bio.Seq import Seq
+from pathlib import Path
+from typing import Optional
+
+import polars as pl
 import torch
+from Bio import SeqIO
+from Bio.Seq import Seq
 from torch import Tensor
 
 from tarp.cli.logging import Console
@@ -49,7 +50,7 @@ class SequenceDataSource(ABC):
     def __add__(self, other: "SequenceDataSource") -> "CombinationSource":
         """
         Combine two data sources into one.
-        
+
         :param SequenceDataSource other: The other data source to combine with.
         :return CombinationSource: A new CombinationSource instance.
         """
@@ -65,6 +66,7 @@ class SequenceDataSource(ABC):
         # Otherwise, create a new CombinationSource with both
         else:
             return CombinationSource([self, other])
+
 
 class TabularSequenceSource(SequenceDataSource):
     """
@@ -192,7 +194,7 @@ class CombinationSource(SequenceDataSource):
     def _get_source_and_local_index(self, index: int) -> tuple[int, int]:
         # bounds check
         if index < 0 or index >= int(self.height):
-            raise IndexError(f"Index {index} out of range (0..{self.height-1})")
+            raise IndexError(f"Index {index} out of range (0..{self.height - 1})")
 
         # make a scalar tensor on same device as cumulative heights
         index: Tensor = torch.tensor(
@@ -201,13 +203,13 @@ class CombinationSource(SequenceDataSource):
             dtype=self._cumulative_heights.dtype,
         )
         source_index = torch.bucketize(index, self._cumulative_heights, right=True)
-        
+
         previous_cumulative_height = torch.where(
             source_index == 0,
             torch.tensor(0, device=self._cumulative_heights.device),
             self._cumulative_heights[source_index - 1],
         )
-        
+
         local_index = index - previous_cumulative_height
 
         return int(source_index.item()), int(local_index.item())
@@ -224,7 +226,9 @@ class CombinationSource(SequenceDataSource):
         source_indices: Tensor = torch.bucketize(
             indices, self._cumulative_heights, right=True
         )
-        previous_cumulative_height = torch.cat([torch.tensor([0]), self._cumulative_heights])
+        previous_cumulative_height = torch.cat(
+            [torch.tensor([0]), self._cumulative_heights]
+        )
         local_indices = indices - previous_cumulative_height[source_indices]
 
         results = [None] * len(indices)
@@ -293,7 +297,9 @@ class FastaSliceSource(SequenceDataSource):
         )
 
         if self.key_column not in self.df.columns:
-            raise ValueError(f"Key column {self.key_column} not found in {self.df.columns}.")
+            raise ValueError(
+                f"Key column {self.key_column} not found in {self.df.columns}."
+            )
 
         if self.start_column not in self.df.columns:
             Console.warning(f"Start column {self.start_column} not found in metadata.")
@@ -355,7 +361,9 @@ class FastaSliceSource(SequenceDataSource):
         results = []
         for key, group in groups.items():
             if key[0] not in self._fasta_map:
-                raise FileNotFoundError(f"No FASTA found for {key[0]} in {self.directory.as_posix()}")
+                raise FileNotFoundError(
+                    f"No FASTA found for {key[0]} in {self.directory.as_posix()}"
+                )
 
             full_sequence = self._load_sequence(key[0])
 

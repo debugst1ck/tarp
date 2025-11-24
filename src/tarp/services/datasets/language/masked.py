@@ -1,10 +1,11 @@
-from torch import Tensor
 import torch
+from torch import Tensor
 
-from tarp.services.preprocessing.augmentation import Augmentation, NoAugmentation
 from tarp.services.datasets import SequenceDataset
 from tarp.services.datasource.sequence import SequenceDataSource
+from tarp.services.preprocessing.augmentation import Augmentation, NoAugmentation
 from tarp.services.tokenizers import Tokenizer
+
 
 class MaskedLanguageModelDataset(SequenceDataset):
     def __init__(
@@ -34,7 +35,9 @@ class MaskedLanguageModelDataset(SequenceDataset):
         truth = sequence.clone()
 
         # Do not mask PAD tokens, attention mask will handle them
-        probability_matrix = torch.full(sequence.shape, self.masking_probability, device=sequence.device)
+        probability_matrix = torch.full(
+            sequence.shape, self.masking_probability, device=sequence.device
+        )
         probability_matrix = probability_matrix * attention_mask
 
         # Get masked indices
@@ -50,18 +53,22 @@ class MaskedLanguageModelDataset(SequenceDataset):
         indices_replaced = masked_indices & (
             torch.bernoulli(torch.full(sequence.shape, 0.8)).bool()
         )
-        
+
         sequence[indices_replaced] = self.mask_token_id
-        
+
         # 10% get replaced with random tokens
-        indices_random = masked_indices & ~indices_replaced & (
-            torch.bernoulli(torch.full(sequence.shape, 0.5)).bool()
+        indices_random = (
+            masked_indices
+            & ~indices_replaced
+            & (torch.bernoulli(torch.full(sequence.shape, 0.5)).bool())
         )
-        random_words = torch.randint(self.tokenizer.vocab_size, sequence.shape, dtype=torch.long)
+        random_words = torch.randint(
+            self.tokenizer.vocab_size, sequence.shape, dtype=torch.long
+        )
         sequence[indices_random] = random_words[indices_random]
-        
+
         # The rest 10% are left unchanged
-        
+
         return {
             "sequence": sequence,
             "attention_mask": attention_mask,
