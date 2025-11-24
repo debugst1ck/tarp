@@ -1,7 +1,7 @@
-from torch import nn, Tensor
-import torch.nn.functional as F
-
 from typing import Optional
+
+import torch.nn.functional as F
+from torch import Tensor, nn
 
 from tarp.model.layers.positional.rotational import RotaryPositionalEmbedding
 
@@ -61,12 +61,11 @@ class MultiHeadSelfAttentionWithRoPE(nn.Module):
 
         # Apply RoPE to queries and keys
         queries, keys = self.rope.rotate_query_and_key(queries, keys)
-        
+
         if attention_mask is not None:
             # attention_mask: (batch, seq_len) -> (batch, 1, 1, seq_len)
             attention_mask = attention_mask[:, None, None, :].to(query.dtype)
             attention_mask = (1.0 - attention_mask) * -1e9  # convert to additive mask
-
 
         # Scaled dot-product attention Flash Attention
         attention_output = F.scaled_dot_product_attention(
@@ -134,27 +133,33 @@ class MultiHeadCrossAttentionWithRoPE(nn.Module):
                 batch_size, query_length, self.number_of_heads, self.head_dimension
             )
             .transpose(1, 2)
-        ) # Each: (batch_size, number_of_heads, seq_len, head_dimension)
+        )  # Each: (batch_size, number_of_heads, seq_len, head_dimension)
 
         keys: Tensor = (
             self.k_proj(key)
             .reshape(
-                batch_size, key_or_value_length, self.number_of_heads, self.head_dimension
+                batch_size,
+                key_or_value_length,
+                self.number_of_heads,
+                self.head_dimension,
             )
             .transpose(1, 2)
-        ) # Each: (batch_size, number_of_heads, seq_len, head_dimension)
-        
+        )  # Each: (batch_size, number_of_heads, seq_len, head_dimension)
+
         values: Tensor = (
             self.v_proj(value)
             .reshape(
-                batch_size, key_or_value_length, self.number_of_heads, self.head_dimension
+                batch_size,
+                key_or_value_length,
+                self.number_of_heads,
+                self.head_dimension,
             )
             .transpose(1, 2)
-        ) # Each: (batch_size, number_of_heads, seq_len, head_dimension)
+        )  # Each: (batch_size, number_of_heads, seq_len, head_dimension)
 
         # Apply RoPE to queries and keys
         queries, keys = self.rope.rotate_query_and_key(queries, keys)
-        
+
         if attention_mask is not None:
             # attention_mask: (batch, seq_len) -> (batch, 1, 1, seq_len)
             attention_mask = attention_mask[:, None, None, :].to(query.dtype)

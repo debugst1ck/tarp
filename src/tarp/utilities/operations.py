@@ -1,7 +1,8 @@
 # Utility functions for tensor operations
 from typing import Union
-from torch import Tensor
+
 from numpy.typing import NDArray
+from torch import Tensor
 
 
 def rescale(

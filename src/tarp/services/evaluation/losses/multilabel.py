@@ -1,8 +1,9 @@
-import torch
-from torch import nn, Tensor
-import torch.nn.functional as F
-
 from typing import Optional, Union
+
+import torch
+import torch.nn.functional as F
+from torch import Tensor, nn
+
 from tarp.services.evaluation import Reduction
 
 
@@ -101,6 +102,7 @@ class AsymmetricFocalLoss(nn.Module):
                 return loss.sum()
             case _:
                 return loss
+
 
 class FocalLoss(nn.Module):
     def __init__(

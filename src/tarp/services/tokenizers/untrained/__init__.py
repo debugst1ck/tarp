@@ -1,12 +1,15 @@
 # Untrained tokenizer implementation
-from tarp.services.tokenizers import Tokenizer
-from typing import Sequence
 from abc import ABC, abstractmethod
+from typing import Sequence
+
+from tarp.services.tokenizers import Tokenizer
 
 
 class UntrainedTokenizer(Tokenizer, ABC):
     @abstractmethod
-    def train(self, texts: Sequence[str], vocabulary_size: int = 1024, **kwargs) -> None:
+    def train(
+        self, texts: Sequence[str], vocabulary_size: int = 1024, **kwargs
+    ) -> None:
         """
         Optional: Train tokenizer on provided texts.
         Only implemented for trainable subclasses.

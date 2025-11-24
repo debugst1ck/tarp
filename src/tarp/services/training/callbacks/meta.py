@@ -17,20 +17,20 @@ class MultiCallback(Callback):
                 method(subcontext)
 
     # Explicitly override known callback hooks
-    def on_train_start(self, context: TrainerContext):
+    def on_train_start(self, context: TrainerContext, **kwargs):
         self._dispatch(Callback.on_training_start.__name__, context)
 
-    def on_train_end(self, context: TrainerContext):
+    def on_train_end(self, context: TrainerContext, **kwargs):
         self._dispatch(Callback.on_training_end.__name__, context)
 
-    def on_epoch_start(self, context: TrainerContext):
+    def on_epoch_start(self, context: TrainerContext, **kwargs):
         self._dispatch(Callback.on_epoch_start.__name__, context)
 
-    def on_epoch_end(self, context: TrainerContext):
+    def on_epoch_end(self, context: TrainerContext, **kwargs):
         self._dispatch(Callback.on_epoch_end.__name__, context)
 
-    def on_train_batch_end(self, context: TrainerContext) -> None:
+    def on_train_batch_end(self, context: TrainerContext, **kwargs) -> None:
         self._dispatch(Callback.on_train_batch_end.__name__, context)
 
-    def on_train_batch_start(self, context: TrainerContext) -> None:
+    def on_train_batch_start(self, context: TrainerContext, **kwargs) -> None:
         self._dispatch(Callback.on_train_batch_start.__name__, context)

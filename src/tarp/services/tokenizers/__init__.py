@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
+
 from torch import Tensor
+
 
 class Tokenizer(ABC):
     @abstractmethod
@@ -21,7 +23,7 @@ class Tokenizer(ABC):
     @abstractmethod
     def vocab_size(self) -> int:
         raise NotImplementedError
-    
+
     @property
     @abstractmethod
     def mask_token_id(self) -> int:

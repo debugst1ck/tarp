@@ -26,6 +26,7 @@ dependencies = [
     "nbformat",     # Jupyter notebook support
     "ipywidgets",   # Jupyter notebook support
     "umap-learn",   # Dimensionality reduction
+    "orfipy",       # ORF prediction
 ]
 
 [project.scripts]

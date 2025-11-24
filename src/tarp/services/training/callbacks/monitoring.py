@@ -1,12 +1,9 @@
-from typing import Optional
-
-from tarp.services.training.callbacks import Callback
-from tarp.services.evaluation import Extremum
-from tarp.services.training.context import TrainerContext
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from tarp.cli.logging import Console
-
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from tarp.services.evaluation import Extremum
+from tarp.services.training.callbacks import Callback
+from tarp.services.training.context import TrainerContext
 
 
 class EarlyStopping(Callback):
@@ -74,7 +71,7 @@ class LearningRateScheduler(Callback):
                     )
         else:
             context.scheduler.step()
-            
+
     def on_training_start(self, context, **kwargs):
         if context.scheduler is None:
             return

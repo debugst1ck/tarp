@@ -1,7 +1,7 @@
 import random
-from typing import Optional
 import sys
 from array import array
+from typing import Optional
 
 from tarp.services.preprocessing.augmentation import Augmentation
 

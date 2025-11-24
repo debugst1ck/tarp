@@ -1,9 +1,10 @@
 # Sequence augmentation techniques
 import random
-from Bio.Seq import Seq
-from array import array
 import sys
+from array import array
 from typing import Optional
+
+from Bio.Seq import Seq
 
 from tarp.services.preprocessing.augmentation import Augmentation
 

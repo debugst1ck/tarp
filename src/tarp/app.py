@@ -1,57 +1,40 @@
 import datetime
-import os
-from typing import Optional
-import torch
 from pathlib import Path
-from torch import nn
 
+import polars as pl
+import torch
+import torch.multiprocessing as mp
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
-import polars as pl
-
+from tarp.cli.logging import Console
+from tarp.config import TransformerConfig
 from tarp.model.backbone import Encoder
 from tarp.model.backbone.untrained.transformer import TransformerEncoder
-
+from tarp.model.finetuning.classification import ClassificationModel
 from tarp.model.finetuning.language import LanguageModel
 from tarp.model.finetuning.metric.triplet import TripletMetricModel
-from tarp.model.finetuning.classification import ClassificationModel
-
-from tarp.services.utilities.seed import establish_random_seed
-from tarp.cli.logging import Console
-from tarp.services.tokenizers.pretrained.dnabert import Dnabert2Tokenizer
-from tarp.services.tokenizers import Tokenizer
-from tarp.services.datasource.sequence import (
-    TabularSequenceSource,
-    FastaSliceSource,
-    SequenceDataSource
-)
 from tarp.services.datasets.classification.multilabel import (
     MultiLabelClassificationDataset,
 )
+from tarp.services.datasets.language.masked import MaskedLanguageModelDataset
 from tarp.services.datasets.metric.triplet import MultiLabelOfflineTripletDataset
+from tarp.services.datasource.sequence import FastaSliceSource, TabularSequenceSource
+from tarp.services.evaluation.losses.multilabel import AsymmetricFocalLoss
+from tarp.services.preprocessing.augmentation import CompositeAugmentation
+from tarp.services.preprocessing.augmentation.nucleotide import (
+    InsertionDeletion,
+    RandomMutation,
+    ReverseComplement,
+)
+from tarp.services.tokenizers.pretrained.dnabert import Dnabert2Tokenizer
 from tarp.services.training.trainer.classification.multilabel import (
     MultiLabelClassificationTrainer,
 )
-from tarp.services.evaluation.losses.multilabel import AsymmetricFocalLoss
-from tarp.services.training.trainer.metric.triplet import OfflineTripletMetricTrainer
-from tarp.services.preprocessing.augmentation.nucleotide import (
-    RandomMutation,
-    InsertionDeletion,
-    ReverseComplement,
-)
-from tarp.services.preprocessing.augmentation import CompositeAugmentation
-
-from tarp.services.datasets.language.masked import MaskedLanguageModelDataset
-
-from tarp.config import TransformerConfig
-
 from tarp.services.training.trainer.language.masked import MaskedLanguageModelTrainer
+from tarp.services.training.trainer.metric.triplet import OfflineTripletMetricTrainer
+from tarp.services.utilities.seed import establish_random_seed
 
-
-import torch.multiprocessing as mp
-
-    
 
 def pretrain(device: torch.device, encoder: Encoder) -> Encoder:
     masked_language_dataset_train = MaskedLanguageModelDataset(
@@ -102,7 +85,7 @@ def pretrain(device: torch.device, encoder: Encoder) -> Encoder:
         vocabulary_size=masked_language_dataset_train.tokenizer.vocab_size,
     )
 
-    torch.compile(language_model, mode="reduce-overhead")
+    torch.compile(language_model, mode="max-autotune")
 
     optimizer_language = AdamW(
         [
@@ -237,7 +220,6 @@ def finetune(device: torch.device, encoder: Encoder) -> Encoder:
             True if mp.get_start_method(allow_none=True) == "spawn" else False
         ),
     ).fit()
-    
 
     optimizer_classification = AdamW(
         [
@@ -253,7 +235,7 @@ def finetune(device: torch.device, encoder: Encoder) -> Encoder:
             },
         ]
     )
-    
+
     label_cache = pl.read_parquet(Path("temp/data/cache/labels_cache_train.parquet"))
     label_tensor = torch.tensor(label_cache.select(label_columns).to_numpy())
 
@@ -264,7 +246,7 @@ def finetune(device: torch.device, encoder: Encoder) -> Encoder:
         class_weights.max() - class_weights.min()
     )
     class_weights = class_weights * (10.0 - 0.1) + 0.1  # Scale to [0.1, 10.0]
-    
+
     Console.debug(
         str(
             pl.DataFrame(
@@ -275,7 +257,7 @@ def finetune(device: torch.device, encoder: Encoder) -> Encoder:
             )
         )
     )
-    
+
     trainer = MultiLabelClassificationTrainer(
         model=classification_model,
         train_dataset=multilabel_classification_train,
@@ -297,12 +279,13 @@ def finetune(device: torch.device, encoder: Encoder) -> Encoder:
         ),
     )
     trainer.fit()
-    
+
     return classification_model.encoder
 
 
 def save_model(model: torch.nn.Module, name: str, run_id: str) -> Path:
-    path = Path(f"temp/checkpoints/{name}_{run_id}.pt")
+    path = Path(f"temp/checkpoints/{run_id}/{name}_{run_id}.pt")
+    path.parent.mkdir(parents=True, exist_ok=True)
     # Move model to CPU before saving to avoid CUDA initialization issues on load
     torch.save({k: v.cpu() for k, v in model.state_dict().items()}, path)
     return path
@@ -356,7 +339,7 @@ def main() -> None:
 
     Console.info("Starting pre-training phase")
     pretrained_encoder = pretrain(device=device, encoder=encoder)
-    
+
     Console.info("Starting fine-tuning phase")
     finetuned_encoder = finetune(device=device, encoder=pretrained_encoder)
 
@@ -367,6 +350,7 @@ def main() -> None:
     )
 
     Console.info("Training complete")
+
 
 if __name__ == "__main__":
     main()

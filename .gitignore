@@ -24,3 +24,6 @@ build/
 
 # Egg and wheel files
 *.egg-info/
+
+# __pycache__ directories
+__pycache__/

@@ -1,8 +1,8 @@
-from typing import Optional, Callable
-from torch import Tensor
-import torch
+from typing import Callable, Optional, Union
+
 import sklearn.metrics
-from typing import Union
+import torch
+from torch import Tensor
 
 from tarp.cli.logging import Console
 
@@ -87,9 +87,7 @@ class MultiLabelMetrics:
 
     def _roc_auc(self, logits: Tensor, targets: Tensor) -> Optional[float]:
         if not self.logits:
-            Console.warning(
-                "ROC AUC metric expects logits, but got probabilities."
-            )
+            Console.warning("ROC AUC metric expects logits, but got probabilities.")
             return float("nan")
 
         probs = self._predict_probability(logits).cpu().numpy()
@@ -120,8 +118,10 @@ class MultiLabelMetrics:
         return sklearn.metrics.hamming_loss(
             targets.cpu().numpy(), predictions.cpu().numpy()
         )
-        
-    def _label_ranking_average_precision(self, logits: Tensor, targets: Tensor) -> float:
+
+    def _label_ranking_average_precision(
+        self, logits: Tensor, targets: Tensor
+    ) -> float:
         if not self.logits:
             Console.warning(
                 "Label Ranking Average Precision metric expects logits, but got probabilities."
@@ -131,9 +131,7 @@ class MultiLabelMetrics:
         probs = self._predict_probability(logits).cpu().numpy()
         y_true = targets.cpu().numpy()
 
-        return sklearn.metrics.label_ranking_average_precision_score(
-            y_true, probs
-        )
+        return sklearn.metrics.label_ranking_average_precision_score(y_true, probs)
 
     # --- public interface ---
     def compute(

@@ -1,8 +1,9 @@
-import torch
-from torch import nn, Tensor
-import torch.nn.functional as F
-from typing import Optional, Union
 import math
+from typing import Optional, Union
+
+import torch
+import torch.nn.functional as F
+from torch import Tensor, nn
 
 
 class LearnedPositionPooling(nn.Module):
@@ -51,10 +52,10 @@ class LearnedPositionPooling(nn.Module):
         )  # (B, L)
 
         # Reshape attention scores to match the input tensor shape
-        attention_scores = attention_scores.unsqueeze(-1)  # (B, L, 1)
+        attention_weights = attention_weights.unsqueeze(-1)  # (B, L, 1)
 
         # Weighted sum
-        pooled_output = torch.sum(hidden_states * attention_scores, dim=1)  # (B, H)
+        pooled_output = torch.sum(hidden_states * attention_weights, dim=1)  # (B, H)
 
         if return_attention:
             return pooled_output, attention_weights
@@ -91,7 +92,9 @@ class QueryAttentionPooling(nn.Module):
         """
 
         # Compute attention scores, scaled by the square root of hidden size
-        scores = hidden_states @ self.query_vector / math.sqrt(self.hidden_size)  # (B, L)
+        scores = (
+            hidden_states @ self.query_vector / math.sqrt(self.hidden_size)
+        )  # (B, L)
 
         if attention_mask is not None:
             scores = scores.masked_fill(attention_mask == 0, float("-inf"))
@@ -103,7 +106,7 @@ class QueryAttentionPooling(nn.Module):
         attention_weights = attention_weights.unsqueeze(-1)  # (B, L, 1)
 
         # Weighted sum
-        pooled_output = torch.sum(hidden_states * attention_weights, dim=1) # (B, H)
+        pooled_output = torch.sum(hidden_states * attention_weights, dim=1)  # (B, H)
 
         if return_attention:
             return pooled_output, attention_weights
