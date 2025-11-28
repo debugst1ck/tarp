@@ -1,5 +1,8 @@
+from typing import override
+
 import torch
-from torch import nn, Tensor
+from torch import Tensor, nn
+
 
 class RotaryPositionalEmbedding(nn.Module):
     """
@@ -12,6 +15,7 @@ class RotaryPositionalEmbedding(nn.Module):
     def __init__(
         self,
         head_dimension: int,
+        rotational_fraction: float = 1.0,
         maximum_sequence_length: int = 1024,
         base: int = 10000,
     ):
@@ -24,28 +28,60 @@ class RotaryPositionalEmbedding(nn.Module):
         self.dimension = head_dimension
         self.maximum_sequence_length = maximum_sequence_length
         self.base = base
+        self.rotational_fraction = rotational_fraction
 
-        # Precompute the inverse
-        inverse_frequencies = 1.0 / (
-            base ** (torch.arange(0, head_dimension, 2).float() / head_dimension)
-        )
+        self.rotary_dimension = int(self.dimension * self.rotational_fraction)
 
-        # Register as buffers
+        assert self.dimension % 2 == 0, "Head dimension must be even."
+        assert self.rotary_dimension % 2 == 0, "Rotary dimension must be even."
+
+        # Precompute inverse frequency buffers
         self.register_buffer(
-            "inverse_frequencies", inverse_frequencies, persistent=False
+            "inverse_frequencies",
+            torch.zeros(self.rotary_dimension // 2),
+            persistent=False,
         )
 
         # Precompute the cosine and sine caches
         self.register_buffer("cosine_cache", None, persistent=False)
         self.register_buffer("sine_cache", None, persistent=False)
 
-        # Initial computation of caches
-        self._compute_trigonometric_caches(maximum_sequence_length)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        target_device = self.inverse_frequencies.device
+        assert isinstance(target_device, torch.device)
+
+        # Recompute 1 / base^(2i/d)
+        inverse_frequencies = 1.0 / (
+            self.base
+            ** (
+                torch.arange(
+                    0,
+                    self.rotary_dimension,
+                    2,
+                    dtype=torch.float,
+                    device=target_device,
+                )
+                / self.rotary_dimension
+            )
+        )
+
+        with torch.no_grad():
+            # Object of type "Tensor" is not callable
+            # Attribute "__call__" is unknown
+            # I don't know why mypy is complaining here so I'm gonna disable it
+            self.inverse_frequencies.copy_(inverse_frequencies)  # type: ignore
+
+        # Recompute trigonometric caches
+        self._compute_trigonometric_caches(self.maximum_sequence_length)
 
     def _compute_trigonometric_caches(self, sequence_length: int):
+        target_device = self.inverse_frequencies.device
+        assert isinstance(target_device, torch.device)
         positions: Tensor = torch.arange(
-            sequence_length, device=self.inverse_frequencies.device
-        ).float()  # (sequence_length,)
+            sequence_length, dtype=torch.float, device=target_device
+        )  # (sequence_length,)
         angle_rates = torch.einsum("i,j->ij", positions, self.inverse_frequencies)
 
         # Apply rotation formula, Euler's formula: exp(i*angle) = cos(angle) + i*sin(angle)
@@ -54,18 +90,20 @@ class RotaryPositionalEmbedding(nn.Module):
         self.sine_cache = angle_rates.sin().unsqueeze(0).unsqueeze(0)
 
     @staticmethod
-    def _apply_rotary_embedding(input: Tensor, cosine: Tensor, sine: Tensor) -> Tensor:
+    def _apply_full_rotary_embedding(
+        input: Tensor, cosine: Tensor, sine: Tensor
+    ) -> Tensor:
         """
         Apply rotary embedding to a given tensor.
 
-        :param Tensor tensor: Input tensor of shape (..., head_dimension)
-        :param Tensor cosine: Cosine values of shape (..., head_dimension/2)
-        :param Tensor sine: Sine values of shape (..., head_dimension/2)
+        :param Tensor tensor: Input tensor of shape (..., dimension)
+        :param Tensor cosine: Cosine values of shape (..., dimension/2)
+        :param Tensor sine: Sine values of shape (..., dimension/2)
         :return Tensor: Tensor after applying rotary embedding
         """
         input_reshaped = input.reshape(
             *input.shape[:-1], -1, 2
-        )  # (..., head_dimension/2, 2)
+        )  # (..., dimension/2, 2)
 
         # Apply rotation
         rotated = torch.stack(
@@ -76,7 +114,38 @@ class RotaryPositionalEmbedding(nn.Module):
             dim=-1,
         )
 
-        return rotated.reshape(input.shape)  # (..., head_dimension)
+        return rotated.reshape(input.shape)  # (..., dimension)
+
+    def _apply_partial_rotary_embedding(
+        self, input: Tensor, cosine: Tensor, sine: Tensor, rotary_dimension: int
+    ) -> Tensor:
+        """
+        Apply rotary embedding to a fraction of the head dimension.
+
+        :param Tensor input: Input tensor of shape (..., head_dimension)
+        :param Tensor cosine: Cosine values of shape (..., head_dimension/2)
+        :param Tensor sine: Sine values of shape (..., head_dimension/2)
+        :param int rotary_dimension: Dimension to apply rotary embedding to
+        :return Tensor: Tensor after applying rotary embedding
+        """
+        # Split the input into rotary and non-rotary parts
+        input_rotary = input[..., :rotary_dimension]  # (..., rotary_dimension)
+        input_passive = input[
+            ..., rotary_dimension:
+        ]  # (..., head_dimension - rotary_dimension)
+
+        # Slice to rotary dimension / 2
+        cosine_rotary = cosine[..., : rotary_dimension // 2]
+        sine_rotary = sine[..., : rotary_dimension // 2]
+
+        input_rotated = self._apply_full_rotary_embedding(
+            input_rotary, cosine_rotary, sine_rotary
+        )  # (..., rotary_dimension)
+
+        # Concatenate rotated and passive parts
+        return torch.cat(
+            [input_rotated, input_passive], dim=-1
+        )  # (..., head_dimension)
 
     def rotate_query_or_key(self, input: Tensor):
         """
@@ -87,10 +156,6 @@ class RotaryPositionalEmbedding(nn.Module):
         """
 
         batch_size, number_of_heads, sequence_length, _ = input.shape
-        # Make sure head dimension is even
-        assert (
-            self.dimension % 2 == 0
-        ), "Head dimension must be even for rotary embeddings."
 
         # Compute caches if needed
         if (self.cosine_cache is None) or (
@@ -105,7 +170,9 @@ class RotaryPositionalEmbedding(nn.Module):
 
         # Rotary expects (..., D)
         # input: (B, H, L, D)
-        rotated = self._apply_rotary_embedding(input, cosine, sine)
+        rotated = self._apply_partial_rotary_embedding(
+            input, cosine, sine, self.rotary_dimension
+        )
 
         return rotated
 
@@ -121,11 +188,41 @@ class RotaryPositionalEmbedding(nn.Module):
         rotated_key = self.rotate_query_or_key(key)
         return rotated_query, rotated_key
 
+    def rotate_input(self, input: Tensor) -> Tensor:
+        """
+        Apply rotary positional embeddings to the input tensor without head dimension split.
+
+        :param Tensor input: Input tensor of shape (batch_size, sequence_length, dimension)
+        :return Tensor: Rotated tensor with shape (batch_size, sequence_length, dimension)
+        """
+        batch_size, sequence_length, dimension = input.shape
+        # Make sure head dimension is even
+        assert dimension % 2 == 0, "Dimension must be even for rotary embeddings."
+
+        # Compute caches if needed
+        if (self.cosine_cache is None) or (
+            self.cosine_cache.shape[2] < sequence_length
+        ):
+            self._compute_trigonometric_caches(sequence_length)
+
+        # Shape caches for broadcasting:
+        # Caches: (1, 1, L, D/2) -> (1, L, D/2)
+        cosine = self.cosine_cache[0, 0, :sequence_length]  # (L, D/2)
+        sine = self.sine_cache[0, 0, :sequence_length]  # (L, D/2)
+
+        cosine = cosine.unsqueeze(0)  # (1, L, D/2)
+        sine = sine.unsqueeze(0)  # (1, L, D/2)
+
+        return self._apply_partial_rotary_embedding(
+            input, cosine, sine, self.rotary_dimension
+        )
+
+    @override
     def forward(self, input: Tensor) -> Tensor:
         """
         Apply rotary positional embeddings to the input tensor.
 
-        :param Tensor input: Input tensor of shape (batch_size, sequence_length, number_of_heads, head_dimension)
+        :param Tensor input: Input tensor of shape (batch_size, sequence_length, dimension)
         :return Tensor: Rotated tensor
         """
-        return self.rotate_query_or_key(input)
+        return self.rotate_input(input)

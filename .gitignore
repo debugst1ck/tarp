@@ -7,17 +7,8 @@ temp/
 # Ignore dataset files
 data/
 
-# Ignore model files
-saved_models/
-
 # Ignore logs
 logs/
-
-# Ignore virtual environment
-.venv/
-
-# Ignore IDE specific files
-.vscode/
 
 # Build files
 build/
@@ -27,3 +18,11 @@ build/
 
 # __pycache__ directories
 __pycache__/
+
+# All hidden directories and their contents
+.venv/
+.env/
+.idea/
+.vscode/
+.zed
+.cache/
