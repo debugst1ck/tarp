@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import polars as pl
 import torch
@@ -159,7 +159,7 @@ class FastaDirectorySource(SequenceDataSource):
             return {}
 
         with open(fasta_path, "r") as handle:
-            row = self.dataframe[index].to_dict(as_series=False)
+            row: dict[str, Any] = self.dataframe[index].to_dict(as_series=False)
             row[self.sequence_column] = "".join(
                 str(record.seq) for record in SeqIO.parse(handle, "fasta")
             )
@@ -197,12 +197,12 @@ class CombinationSource(SequenceDataSource):
             raise IndexError(f"Index {index} out of range (0..{self.height - 1})")
 
         # make a scalar tensor on same device as cumulative heights
-        index: Tensor = torch.tensor(
+        index_t: Tensor = torch.tensor(
             index,
             device=self._cumulative_heights.device,
             dtype=self._cumulative_heights.dtype,
         )
-        source_index = torch.bucketize(index, self._cumulative_heights, right=True)
+        source_index = torch.bucketize(index_t, self._cumulative_heights, right=True)
 
         previous_cumulative_height = torch.where(
             source_index == 0,
@@ -210,7 +210,7 @@ class CombinationSource(SequenceDataSource):
             self._cumulative_heights[source_index - 1],
         )
 
-        local_index = index - previous_cumulative_height
+        local_index = index_t - previous_cumulative_height
 
         return int(source_index.item()), int(local_index.item())
 
@@ -221,24 +221,24 @@ class CombinationSource(SequenceDataSource):
         if not indices:
             return []
 
-        indices: Tensor = torch.as_tensor(indices)
+        indices_t: Tensor = torch.as_tensor(indices)
 
         source_indices: Tensor = torch.bucketize(
-            indices, self._cumulative_heights, right=True
+            indices_t, self._cumulative_heights, right=True
         )
         previous_cumulative_height = torch.cat(
             [torch.tensor([0]), self._cumulative_heights]
         )
-        local_indices = indices - previous_cumulative_height[source_indices]
+        local_indices = indices_t - previous_cumulative_height[source_indices]
 
-        results = [None] * len(indices)
+        results = [{} for _ in range(len(indices_t))]
 
         unique_sources: Tensor = torch.unique(source_indices)
         for source_index in unique_sources:
             mask = source_indices == source_index
             positions = torch.nonzero(mask, as_tuple=False).squeeze(1)
             source_local_indices = local_indices[mask].tolist()
-            batch_results = self.sources[source_index.item()].batch(
+            batch_results = self.sources[int(source_index.item())].batch(
                 source_local_indices
             )
 
@@ -264,7 +264,7 @@ class InMemorySequenceSource(SequenceDataSource):
         return self.dataframe.row(index, named=True)
 
     def batch(self, indices: list[int]) -> list[dict]:
-        return self.dataframe.rows(indices, named=True)
+        return self.dataframe.filter(pl.col("index").is_in(indices)).rows(named=True)
 
 
 class FastaSliceSource(SequenceDataSource):
@@ -285,8 +285,8 @@ class FastaSliceSource(SequenceDataSource):
         self.directory = directory
         self.metadata = metadata
         self.key_column = key_column
-        self.start_column = start_column
-        self.end_column = end_column
+        self.start_column: str | None = start_column
+        self.end_column: str | None = end_column
         self.orientation_column = orientation_column
         self.sequence_column = sequence_column
 
@@ -303,9 +303,11 @@ class FastaSliceSource(SequenceDataSource):
 
         if self.start_column not in self.df.columns:
             Console.warning(f"Start column {self.start_column} not found in metadata.")
+            self.start_column = None  # Invalidate if not found
 
         if self.end_column not in self.df.columns:
             Console.warning(f"End column {self.end_column} not found in metadata.")
+            self.end_column = None  # Invalidate if not found
 
         self._fasta_map = {p.stem: p for p in self.directory.glob("*.fasta")}
 
@@ -336,14 +338,16 @@ class FastaSliceSource(SequenceDataSource):
         key = row[self.key_column]
         start = row[self.start_column] if self.start_column in row else None
         end = row[self.end_column] if self.end_column in row else None
-        orientation = row.get(self.orientation_column, "+")
+        orientation = (
+            row.get(self.orientation_column, "+") if self.orientation_column else "+"
+        )
 
         if key not in self._fasta_map:
             raise FileNotFoundError(f"No FASTA found for {key}")
 
         full_sequence = self._load_sequence(key)
 
-        if start is None and end is None:
+        if start is None or end is None:
             sequence = full_sequence
         else:
             sequence = full_sequence[start:end]
@@ -368,11 +372,15 @@ class FastaSliceSource(SequenceDataSource):
             full_sequence = self._load_sequence(key[0])
 
             for row in group.rows(named=True):
-                start = row[self.start_column] if self.start_column in row else None
-                end = row[self.end_column] if self.end_column in row else None
-                orientation = row.get(self.orientation_column, "+")
+                start = row[self.start_column] if self.start_column else None
+                end = row[self.end_column] if self.end_column else None
+                orientation = (
+                    row.get(self.orientation_column, "+")
+                    if self.orientation_column
+                    else "+"
+                )
 
-                if start is None and end is None:
+                if start is None or end is None:
                     sequence = full_sequence
                 else:
                     sequence = full_sequence[start:end]

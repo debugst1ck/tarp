@@ -8,13 +8,11 @@ from tarp.model.layers.pooling.learned import SelfAttentionPooling
 
 
 class Dnabert2Encoder(Encoder):
-    def __init__(
-        self, embedding_dimension: int, name: str = "zhihan1996/DNABERT-2-117M"
-    ):
+    def __init__(self, model_dimension: int, name: str = "zhihan1996/DNABERT-2-117M"):
         super().__init__()
-        self.embedding_dimension = embedding_dimension
+        self.model_dimension = model_dimension
         self.encoder = AutoModel.from_pretrained(name, trust_remote_code=True)
-        self.pooling = SelfAttentionPooling(embedding_dimension)
+        self.pooling = SelfAttentionPooling(model_dimension)
 
     def encode(
         self,
@@ -34,12 +32,12 @@ class Dnabert2Encoder(Encoder):
         if return_sequence:
             return outputs
         else:
-            pooled_representation = self.pooling(outputs)
+            pooled_representation = self.pooling(outputs, attention_mask=attention_mask)
             return pooled_representation
 
     @property
     def encoding_size(self) -> int:
-        return self.embedding_dimension
+        return self.model_dimension
 
 
 class FrozenDnabert2Encoder(Encoder, FrozenModel):

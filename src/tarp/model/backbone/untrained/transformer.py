@@ -155,7 +155,9 @@ class TransformerEncoder(Encoder):
         if return_sequence:
             return self.dropout(self.normalization(encoded))
         else:
-            return self.pooling(self.dropout(self.normalization(encoded)))
+            return self.pooling(
+                self.dropout(self.normalization(encoded)), attention_mask
+            )
 
     @property
     def encoding_size(self) -> int:
