@@ -13,7 +13,7 @@ class TrainerState:
         optimizer: Optimizer,
         scheduler: Optional[LRScheduler],
         device: torch.device,
-        scaler: Optional[torch.amp.GradScaler] = None,
+        scaler: Optional[torch.amp.grad_scaler.GradScaler] = None,
         epochs: int = 10,
         accumulation_steps: int = 1,
         use_amp: bool = True,

@@ -29,7 +29,7 @@ class TrainerContext:
         return self.state.scheduler
 
     @property
-    def scaler(self) -> Optional[torch.amp.GradScaler]:
+    def scaler(self) -> Optional[torch.amp.grad_scaler.GradScaler]:
         return self.state.scaler
 
     def request_stop(self):

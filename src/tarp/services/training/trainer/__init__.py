@@ -65,7 +65,7 @@ class Trainer(ABC):
                 optimizer=optimizer,
                 scheduler=scheduler,
                 device=device,
-                scaler=torch.amp.GradScaler(enabled=use_amp),
+                scaler=torch.amp.grad_scaler.GradScaler(enabled=use_amp),
                 epochs=epochs,
                 accumulation_steps=accumulation_steps,
                 use_amp=use_amp,
@@ -151,17 +151,22 @@ class Trainer(ABC):
         return {}
 
     def backpropagation(self, loss: Tensor) -> None:
-        self.context.scaler.scale(loss).backward()
+        if self.context.scaler is None:
+            loss.backward()
+        else:
+            self.context.scaler.scale(loss).backward()
 
     def optimization(self) -> None:
-        self.context.scaler.unscale_(self.context.optimizer)
+        if self.context.scaler is not None:
+            self.context.scaler.unscale_(self.context.optimizer)
         if self.context.gradient_clipping_threshold > 0:
             torch.nn.utils.clip_grad_norm_(
                 self.context.model.parameters(),
                 self.context.gradient_clipping_threshold,
             )
-        self.context.scaler.step(self.context.optimizer)
-        self.context.scaler.update()
+        if self.context.scaler is not None:
+            self.context.scaler.step(self.context.optimizer)
+            self.context.scaler.update()
         self.context.optimizer.zero_grad()
 
     def fit(self) -> None:

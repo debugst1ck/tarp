@@ -21,7 +21,7 @@ class EarlyStopping(Callback):
         self.monitor_metric = monitor_metric
         self.monitor_mode = monitor_mode
 
-    def on_epoch_end(self, context: TrainerContext) -> None:
+    def on_epoch_end(self, context: TrainerContext, **kwargs) -> None:
         current_value = context.state.history[context.epoch].get(self.monitor_metric)
         if current_value is None:
             return
@@ -44,7 +44,7 @@ class EarlyStopping(Callback):
                 Console.info("Early stopping triggered.")
                 context.request_stop()
 
-    def on_training_start(self, context: TrainerContext) -> None:
+    def on_training_start(self, context: TrainerContext, **kwargs) -> None:
         Console.debug(f"Monitoring {self.monitor_metric} for early stopping.")
 
 
@@ -56,7 +56,7 @@ class LearningRateScheduler(Callback):
     def __init__(self, monitor_metric: str) -> None:
         self.monitor_metric = monitor_metric
 
-    def on_epoch_end(self, context: TrainerContext) -> None:
+    def on_epoch_end(self, context: TrainerContext, **kwargs) -> None:
         if context.scheduler is None:
             return
         if isinstance(context.scheduler, ReduceLROnPlateau):

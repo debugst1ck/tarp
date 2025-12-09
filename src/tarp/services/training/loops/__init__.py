@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
+from typing import Callable, Optional
+
 from torch import Tensor
 from torch.utils.data import DataLoader
-
-from typing import Optional, Callable, Union
 
 from tarp.services.training.callbacks import Callback
 from tarp.services.training.context import TrainerContext
@@ -11,7 +11,7 @@ from tarp.services.training.context import TrainerContext
 class Loop(ABC):
     def __init__(
         self,
-        context: Union[TrainerContext, list[TrainerContext]],
+        context: TrainerContext,
         forward: Callable[
             [dict[str, Tensor]], tuple[Tensor, Optional[Tensor], Optional[Tensor]]
         ],
@@ -51,5 +51,11 @@ class Loop(ABC):
     @abstractmethod
     def step(
         self, batch: dict[str, Tensor], optimize: bool = True
+    ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def manual_step(
+        self, batch: dict[str, Tensor], step_index: int, total_steps: int
     ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         raise NotImplementedError

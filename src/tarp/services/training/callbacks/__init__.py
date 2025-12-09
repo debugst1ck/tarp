@@ -19,3 +19,9 @@ class Callback:
 
     def on_train_batch_start(self, context: TrainerContext, **kwargs) -> None:
         pass
+
+    def on_validation_batch_end(self, context: TrainerContext, **kwargs) -> None:
+        pass
+
+    def on_validation_batch_start(self, context: TrainerContext, **kwargs) -> None:
+        pass
