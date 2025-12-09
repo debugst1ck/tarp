@@ -255,10 +255,15 @@ class HyenaFilter1D(nn.Module):
         filter_weights = filter_weights.squeeze(0).transpose(0, 1)  # (D_model, L)
         return filter_weights
 
-    def forward(self, input: Tensor, is_causal: bool = False) -> Tensor:
+    def forward(
+        self,
+        input: Tensor,
+        attention_mask: Optional[Tensor] = None,
+        is_causal: bool = False,
+    ) -> Tensor:
         """
         :param input: Input tensor of shape (B, L_in, d_model).
-        :param kernel: Optional precomputed filter weights of shape (d_model, L_k). If None, generates filter weights.
+        :param attention_mask: Optional attention mask of shape (B, L_in), True for valid positions.
         :param is_causal: Whether to apply causal padding.
         :return: Output tensor of shape (B, L_out, d_model).
         """
@@ -272,6 +277,12 @@ class HyenaFilter1D(nn.Module):
         # Transpose input to (B, d_model, L_in)
         input_transposed = input.transpose(1, 2)  # (B, d_model, L_in)
         kernel = kernel.unsqueeze(1)  # (d_model, 1, L_k)
+
+        # Apply attention mask if provided
+        if attention_mask is not None:
+            input_transposed = input_transposed * attention_mask.unsqueeze(1).to(
+                input_transposed.dtype
+            )
 
         # We treat each feature dimension independently (groups=d_model)
         # Make 'same' padding
@@ -294,6 +305,13 @@ class HyenaFilter1D(nn.Module):
 
         # Add per channel bias
         output = output.transpose(1, 2)  # (B, L_out, d_model)
+        # Apply attention mask to output if provided
+
+        if attention_mask is not None:
+            output = output * attention_mask.unsqueeze(-1).to(
+                output.dtype
+            )  # (B, L_out, d_model)
+
         return output  # (B, L_out, d_model) # where L_out = L_in due to 'same' padding
 
 
@@ -368,6 +386,9 @@ class HyenaOperator1D(nn.Module):
 
         batch_size, sequence_length, _ = input.shape
 
+        if attention_mask is not None:
+            input = input * attention_mask.unsqueeze(-1).to(input.dtype)
+
         # Project input to get initial states for Hyena layers
         projected_input: Tensor = self.input_projection(
             input
@@ -436,7 +457,7 @@ class HyenaOperator1D(nn.Module):
 
         # Apply attention mask to output if provided
         if attention_mask is not None:
-            output = output * attention_mask.unsqueeze(-1)  # (B, L, D)
+            output = output * attention_mask.unsqueeze(-1).to(output.dtype)  # (B, L, D)
 
         # Trim output to original sequence length if padded
         output = output[:, :sequence_length, :]  # (B, L, D)
