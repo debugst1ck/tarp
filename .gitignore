@@ -26,3 +26,4 @@ __pycache__/
 .vscode/
 .zed
 .cache/
+.pytest_cache/

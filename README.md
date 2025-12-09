@@ -25,7 +25,7 @@ This repository is a suite of tools and models designed to predict antimicrobial
 3. (Optional, Recommended) Create and activate a virtual environment:
     For Windows PowerShell:
     ```powershell
-    Set-ExecutionPolicy Unrestricted -Scope Process
+    Set-ExecutionPolicy RemoteSigned -Scope Process
     python -m venv .venv
     .venv\Scripts\activate
     ```
