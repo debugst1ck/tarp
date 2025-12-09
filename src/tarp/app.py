@@ -160,7 +160,7 @@ class MaskedLanguageModelPretrainingStage(Stage):
             optimizer=optimizer_language,
             scheduler=CosineAnnealingWarmRestarts(optimizer_language, T_0=5, T_mult=2),
             device=self.device,
-            epochs=1,
+            epochs=20,
             num_workers=4,
             batch_size=64,
             accumulation_steps=4,
@@ -267,7 +267,7 @@ class MultiLabelClassificationFinetuningStage(Stage):
                 gamma_neg=1, gamma_pos=3, class_weights=class_weights
             ),
             device=self.device,
-            epochs=5,
+            epochs=15,
             num_workers=4,
             batch_size=64,
             accumulation_steps=4,
