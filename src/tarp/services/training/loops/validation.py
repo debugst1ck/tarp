@@ -5,6 +5,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from tarp.services.training.callbacks import Callback
 from tarp.services.training.loops import Loop
 
 
@@ -12,11 +13,19 @@ class ValidationLoop(Loop):
     def step(
         self, batch: dict[str, Tensor], optimize: bool = True
     ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
-        with torch.amp.autocast(
+        with torch.amp.autocast_mode.autocast(
             device_type=self.context.device.type,
             enabled=self.context.use_amp,
         ):
             loss, predictions, expected = self.forward(batch)
+        return loss, predictions, expected
+
+    def manual_step(
+        self, batch: dict[str, Tensor], step_index: int, total_steps: int
+    ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
+        self._execute_callbacks(Callback.on_validation_batch_start.__name__)
+        loss, predictions, expected = self.step(batch, optimize=False)
+        self._execute_callbacks(Callback.on_validation_batch_end.__name__)
         return loss, predictions, expected
 
     def run(self, epoch: int, dataloader: DataLoader) -> dict[str, float]:
@@ -31,7 +40,11 @@ class ValidationLoop(Loop):
         )
         with torch.no_grad():
             for batch in loop:
-                loss, predictions, expected = self.step(batch, optimize=False)
+                loss, predictions, expected = self.manual_step(
+                    batch,
+                    step_index=0,
+                    total_steps=0,
+                )
                 total_loss += loss.item()
                 if predictions is not None:
                     all_predictions.append(predictions)
