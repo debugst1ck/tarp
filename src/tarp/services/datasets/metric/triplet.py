@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import override
 
 import polars as pl
 import torch
@@ -87,7 +86,6 @@ class MultiLabelOfflineTripletDataset(SequenceDataset):
                 diagonal, float("inf")
             )
 
-    @override
     def process_row(self, index: int, row: dict) -> dict[str, dict[str, Tensor]]:
         positive_mask = self.overlap_matrix[index]
         negative_mask = self.no_overlap_matrix[index]

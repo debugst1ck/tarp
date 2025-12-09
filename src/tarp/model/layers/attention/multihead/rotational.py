@@ -6,24 +6,31 @@ from torch import Tensor, nn
 from tarp.model.layers.positional.rotational import RotaryPositionalEmbedding
 
 
-class MultiHeadSelfAttentionWithRoPE(nn.Module):
+class MultiHeadSelfAttentionWithRotaryPositionalEmbeddings(nn.Module):
     def __init__(
         self,
-        embedding_dimension: int,
+        model_dimension: int,
         number_of_heads: int,
         dropout: float = 0.1,
     ):
         super().__init__()
-        self.embedding_dimension = embedding_dimension
+        self.model_dimension = model_dimension
         self.number_of_heads = number_of_heads
-        self.head_dimension = embedding_dimension // number_of_heads
+        self.head_dimension = model_dimension // number_of_heads
         self.dropout = dropout
 
         # Linear projections for Q, K, V
-        self.qkv_proj = nn.Linear(embedding_dimension, 3 * embedding_dimension)
-        self.out_proj = nn.Linear(embedding_dimension, embedding_dimension)
+        self.qkv_projection = nn.Linear(model_dimension, 3 * model_dimension)
+        self.output_projection = nn.Linear(model_dimension, model_dimension)
 
-        self.rope = RotaryPositionalEmbedding(head_dimension=self.head_dimension)
+        self.rope = RotaryPositionalEmbedding(
+            head_dimension=self.head_dimension, rotational_fraction=1.0
+        )
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        self.qkv_projection.reset_parameters()
+        self.output_projection.reset_parameters()
 
     def forward(
         self,
@@ -34,21 +41,21 @@ class MultiHeadSelfAttentionWithRoPE(nn.Module):
         is_causal: bool = False,
     ) -> Tensor:
         """
-        :param Tensor query: Input query tensor of shape (batch_size, sequence_length, embedding_dimension)
+        :param Tensor query: Input query tensor of shape (batch_size, sequence_length, model_dimension)
         :param Tensor key: Not used in self-attention
         :param Tensor value: Not used in self-attention
-        :param Tensor attention_mask: Optional attention mask of shape (batch_size, sequence_length)
+        :param Tensor attention_mask: Optional attention mask of shape (batch_size, 1, 1, sequence_length)
         :param bool is_causal: Whether to apply causal masking
         """
         batch_size, sequence_length, _ = query.size()
 
-        # Linear projections for Q, K, V
-        qkv: Tensor = self.qkv_proj(
+        # Linear projections for query, key, value
+        qkv: Tensor = self.qkv_projection(
             query
         )  # (batch_size, seq_len, 3*embedding_dimension)
         qkv = qkv.reshape(
             batch_size, sequence_length, 3, self.number_of_heads, self.head_dimension
-        )
+        )  # (batch_size, seq_len, 3, number_of_heads, head_dimension)
         qkv = qkv.permute(
             2, 0, 3, 1, 4
         )  # (3, batch_size, number_of_heads, seq_len, head_dimension)
@@ -62,11 +69,6 @@ class MultiHeadSelfAttentionWithRoPE(nn.Module):
         # Apply RoPE to queries and keys
         queries, keys = self.rope.rotate_query_and_key(queries, keys)
 
-        if attention_mask is not None:
-            # attention_mask: (batch, seq_len) -> (batch, 1, 1, seq_len)
-            attention_mask = attention_mask[:, None, None, :].to(query.dtype)
-            attention_mask = (1.0 - attention_mask) * -1e9  # convert to additive mask
-
         # Scaled dot-product attention Flash Attention
         attention_output = F.scaled_dot_product_attention(
             query=queries,
@@ -79,33 +81,41 @@ class MultiHeadSelfAttentionWithRoPE(nn.Module):
 
         # Transpose (batch_size, number_of_heads, seq_len, head_dimension) -> (batch_size, seq_len, embedding_dimension)
         attention_output = attention_output.transpose(1, 2).reshape(
-            batch_size, sequence_length, self.embedding_dimension
+            batch_size, sequence_length, self.model_dimension
         )
 
-        return self.out_proj(attention_output)
+        return self.output_projection(attention_output)
 
 
-class MultiHeadCrossAttentionWithRoPE(nn.Module):
+class MultiHeadCrossAttentionWithRotaryPositionalEmbeddings(nn.Module):
     def __init__(
         self,
-        embedding_dimension: int,
+        model_dimension: int,
         number_of_heads: int,
         dropout: float = 0.1,
     ):
         super().__init__()
-        self.embedding_dimension = embedding_dimension
+        self.model_dimension = model_dimension
         self.number_of_heads = number_of_heads
-        self.head_dimension = embedding_dimension // number_of_heads
+        self.head_dimension = model_dimension // number_of_heads
         self.dropout = dropout
 
         # Linear projections for Q, K, V
-        self.q_proj = nn.Linear(embedding_dimension, embedding_dimension)
-        self.k_proj = nn.Linear(embedding_dimension, embedding_dimension)
-        self.v_proj = nn.Linear(embedding_dimension, embedding_dimension)
+        self.q_projection = nn.Linear(model_dimension, model_dimension)
+        self.k_projection = nn.Linear(model_dimension, model_dimension)
+        self.v_projection = nn.Linear(model_dimension, model_dimension)
 
-        self.out_proj = nn.Linear(embedding_dimension, embedding_dimension)
+        self.output_projection = nn.Linear(model_dimension, model_dimension)
 
         self.rope = RotaryPositionalEmbedding(head_dimension=self.head_dimension)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        self.q_projection.reset_parameters()
+        self.k_projection.reset_parameters()
+        self.v_projection.reset_parameters()
+        self.output_projection.reset_parameters()
 
     def forward(
         self,
@@ -116,19 +126,22 @@ class MultiHeadCrossAttentionWithRoPE(nn.Module):
         is_causal: bool = False,
     ) -> Tensor:
         """
-        :param Tensor query: Input query tensor of shape (batch_size, query_length, embedding_dimension)
-        :param Tensor key: Input key tensor of shape (batch_size, key_length, embedding_dimension)
-        :param Tensor value: Input value tensor of shape (batch_size, value_length, embedding_dimension)
+        :param Tensor query: Input query tensor of shape (batch_size, query_length, model_dimension)
+        :param Tensor key: Input key tensor of shape (batch_size, key_length, model_dimension)
+        :param Tensor value: Input value tensor of shape (batch_size, value_length, model_dimension)
         :param Tensor attention_mask: Optional attention mask of shape (batch_size, key_length)
         :param bool is_causal: Whether to apply causal masking
+        :return Tensor: Output tensor of shape (batch_size, query_length, model_dimension)
+        :raises ValueError: If key or value is None
         """
         batch_size, query_length, _ = query.size()
 
+        # Determine key or value length, assuming key and value have the same length
         key_or_value_length = key.size(1) if key is not None else value.size(1)
 
         # Linear projections for Q, K, V
         queries: Tensor = (
-            self.q_proj(query)
+            self.q_projection(query)
             .reshape(
                 batch_size, query_length, self.number_of_heads, self.head_dimension
             )
@@ -136,7 +149,7 @@ class MultiHeadCrossAttentionWithRoPE(nn.Module):
         )  # Each: (batch_size, number_of_heads, seq_len, head_dimension)
 
         keys: Tensor = (
-            self.k_proj(key)
+            self.k_projection(key)
             .reshape(
                 batch_size,
                 key_or_value_length,
@@ -147,7 +160,7 @@ class MultiHeadCrossAttentionWithRoPE(nn.Module):
         )  # Each: (batch_size, number_of_heads, seq_len, head_dimension)
 
         values: Tensor = (
-            self.v_proj(value)
+            self.v_projection(value)
             .reshape(
                 batch_size,
                 key_or_value_length,
@@ -175,9 +188,9 @@ class MultiHeadCrossAttentionWithRoPE(nn.Module):
             dropout_p=self.dropout if self.training else 0.0,
         )
 
-        # Transpose (batch_size, number_of_heads, seq_len, head_dimension) -> (batch_size, seq_len, embedding_dimension)
+        # Transpose (batch_size, number_of_heads, seq_len, head_dimension) -> (batch_size, seq_len, model_dimension)
         attention_output = attention_output.transpose(1, 2).reshape(
-            batch_size, query_length, self.embedding_dimension
+            batch_size, query_length, self.model_dimension
         )
 
-        return self.out_proj(attention_output)
+        return self.output_projection(attention_output)
