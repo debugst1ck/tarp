@@ -1,47 +1,45 @@
 # Transformer model for sequence classification
-from torch import nn, Tensor
-import torch
-import torch.nn.functional as F
+from typing import Optional
+
+from torch import Tensor, nn
 
 from tarp.model.backbone import Encoder
-from typing import Optional, Callable
+from tarp.model.layers.attention.multihead.rotational import (
+    MultiHeadSelfAttentionWithRotaryPositionalEmbeddings,
+)
+from tarp.model.layers.pooling.learned import SelfAttentionPooling
 
-from tarp.model.layers.pooling.trainable import QueryAttentionPooling
 
-from tarp.model.layers.attention.multihead.rotational import MultiHeadSelfAttentionWithRoPE
-
-class TransformerEncoderLayerWithRoPE(nn.Module):
+class TransformerEncoderLayerWithRotaryPositionalEmbeddings(nn.Module):
     def __init__(
         self,
-        embedding_dimension: int,
         number_of_heads: int,
+        model_dimension: int,
         feedforward_dimension: int,
         dropout: float = 0.1,
-        activation: Callable = F.relu,
-        normalization_epsilon: float = 1e-5,
+        activation: nn.Module = nn.ReLU(),
+        epsilon: float = 1e-5,
         normalize_first: bool = False,
         bias: bool = True,
-    ):
+    ) -> None:
         super().__init__()
-        self.self_attention = MultiHeadSelfAttentionWithRoPE(
-            embedding_dimension=embedding_dimension,
+        self.self_attention = MultiHeadSelfAttentionWithRotaryPositionalEmbeddings(
+            model_dimension=model_dimension,
             number_of_heads=number_of_heads,
             dropout=dropout,
         )
-        self.feedforward_1 = nn.Linear(
-            embedding_dimension, feedforward_dimension, bias=bias
+
+        self.feedforward_normalization = nn.LayerNorm(model_dimension, eps=epsilon)
+
+        self.feedforward = nn.Sequential(
+            nn.Linear(model_dimension, feedforward_dimension, bias=bias),
+            nn.Dropout(dropout),
+            activation,
+            nn.Linear(feedforward_dimension, model_dimension, bias=bias),
         )
-        self.feedforward_2 = nn.Linear(
-            feedforward_dimension, embedding_dimension, bias=bias
-        )
+
         self.attention_dropout = nn.Dropout(dropout)
-        self.feedforward_dropout = nn.Dropout(dropout)
-        self.attention_normalization = nn.LayerNorm(
-            embedding_dimension, eps=normalization_epsilon
-        )
-        self.feedforward_normalization = nn.LayerNorm(
-            embedding_dimension, eps=normalization_epsilon
-        )
+        self.attention_normalization = nn.LayerNorm(model_dimension, eps=epsilon)
 
         self.activation = activation
         self.normalize_first = normalize_first
@@ -61,13 +59,6 @@ class TransformerEncoderLayerWithRoPE(nn.Module):
         )
         return self.attention_dropout(attention_output)
 
-    def _feedforward_block(self, hidden_states: Tensor) -> Tensor:
-        feedforward_output = self.feedforward_1(hidden_states)
-        feedforward_output = self.activation(feedforward_output)
-        feedforward_output = self.feedforward_dropout(feedforward_output)
-        feedforward_output = self.feedforward_2(feedforward_output)
-        return feedforward_output
-
     def forward(
         self,
         hidden_states: Tensor,
@@ -84,7 +75,7 @@ class TransformerEncoderLayerWithRoPE(nn.Module):
 
             # Feedforward block with residual
             normalized_states = self.feedforward_normalization(hidden_states)
-            feedforward_output = self._feedforward_block(normalized_states)
+            feedforward_output = self.feedforward(normalized_states)
             hidden_states = hidden_states + feedforward_output
 
         # Post-norm architecture
@@ -93,12 +84,11 @@ class TransformerEncoderLayerWithRoPE(nn.Module):
             attention_output = self._self_attention_block(
                 hidden_states, attention_mask, is_causal
             )
-            hidden_states = self.attention_normalization(
-                hidden_states + attention_output
-            )
+            hidden_states = hidden_states + attention_output
+            hidden_states = self.attention_normalization(hidden_states)
 
             # Feedforward block with residual
-            feedforward_output = self._feedforward_block(hidden_states)
+            feedforward_output = self.feedforward(hidden_states)
             hidden_states = self.feedforward_normalization(
                 hidden_states + feedforward_output
             )
@@ -111,7 +101,7 @@ class TransformerEncoder(Encoder):
         self,
         vocabulary_size: int,
         embedding_dimension: int,
-        hidden_dimension: int,
+        feedforward_dimension: int,
         number_of_layers: int = 2,
         number_of_heads: int = 4,
         dropout: float = 0.1,
@@ -125,10 +115,10 @@ class TransformerEncoder(Encoder):
         )
         self.transformer_encoder = nn.ModuleList(
             [
-                TransformerEncoderLayerWithRoPE(
-                    embedding_dimension=embedding_dimension,
+                TransformerEncoderLayerWithRotaryPositionalEmbeddings(
+                    model_dimension=embedding_dimension,
                     number_of_heads=number_of_heads,
-                    feedforward_dimension=hidden_dimension,
+                    feedforward_dimension=feedforward_dimension,
                     dropout=dropout,
                 )
                 for _ in range(number_of_layers)
@@ -138,7 +128,7 @@ class TransformerEncoder(Encoder):
         self.normalization = nn.LayerNorm(embedding_dimension)
         self.dropout = nn.Dropout(dropout)
         self.embedding_dimension = embedding_dimension
-        self.pooling = QueryAttentionPooling(embedding_dimension)
+        self.pooling = SelfAttentionPooling(embedding_dimension)
         self.output_dimension = embedding_dimension
 
     def encode(
@@ -147,13 +137,18 @@ class TransformerEncoder(Encoder):
         attention_mask: Optional[Tensor] = None,
         return_sequence: bool = False,
     ) -> Tensor:
-        embeddings = self.embedding(sequence)  # (batch, seq_len, embedding_dimension)
+        embeddings = self.embedding(sequence)  # (B, L, D)
+
+        mask = None
+        if attention_mask is not None:
+            # attention_mask: (B, L) -> (B, 1, 1, L)
+            mask = attention_mask[:, None, None, :].bool()
 
         encoded = embeddings
         for layer in self.transformer_encoder:
             encoded = layer(
                 hidden_states=encoded,
-                attention_mask=attention_mask,
+                attention_mask=mask,
                 is_causal=False,
             )
 
