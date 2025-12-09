@@ -161,6 +161,7 @@ class JointTripletClassificationTrainer(Trainer):
                 classification_report(
                     torch.concat(expected, dim=0).numpy(),
                     (torch.sigmoid(torch.concat(prediction, dim=0)) > 0.5).numpy(),
+                    output_dict=False,
                 )
             }"
         )
