@@ -324,7 +324,7 @@ def main() -> None:
     encoder = TransformerEncoder(
         vocabulary_size=CharacterTokenizer().vocab_size,
         embedding_dimension=TransformerConfig.embedding_dimension,
-        hidden_dimension=TransformerConfig.hidden_dimension,
+        feedforward_dimension=TransformerConfig.feedforward_dimension,
         padding_id=CharacterTokenizer().pad_token_id,
         number_of_layers=TransformerConfig.number_of_layers,
         number_of_heads=TransformerConfig.number_of_heads,
