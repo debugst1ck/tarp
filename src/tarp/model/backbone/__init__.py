@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Any, Optional
 
 from torch import Tensor, nn
 
@@ -12,6 +12,9 @@ class Encoder(nn.Module, ABC):
     """
 
     def __init__(self):
+        """
+        Initializes the Encoder.
+        """
         super().__init__()
 
     @abstractmethod
@@ -35,6 +38,17 @@ class Encoder(nn.Module, ABC):
     @abstractmethod
     def encoding_size(self) -> int:
         pass
+
+    def optimizer_groups(
+        self, base_learning_rate: float = 1e-4
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "params": self.parameters(),
+                "lr": base_learning_rate,
+                "weight_decay": 1e-2,
+            }
+        ]
 
 
 class FrozenModel(nn.Module, ABC):

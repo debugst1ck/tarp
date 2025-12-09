@@ -1,22 +1,26 @@
-from torch import Tensor
-import torch
-from torch import nn
-from transformers import AutoModel
 from typing import Optional
 
-from tarp.model.layers.pooling.trainable import QueryAttentionPooling
+from torch import Tensor, nn
+from transformers import AutoModel
+
 from tarp.model.backbone import Encoder, FrozenModel
+from tarp.model.layers.pooling.learned import SelfAttentionPooling
 
 
 class Dnabert2Encoder(Encoder):
-    def __init__(self, hidden_dimension: int, name: str = "zhihan1996/DNABERT-2-117M"):
+    def __init__(
+        self, embedding_dimension: int, name: str = "zhihan1996/DNABERT-2-117M"
+    ):
         super().__init__()
-        self.hidden_dimension = hidden_dimension
+        self.embedding_dimension = embedding_dimension
         self.encoder = AutoModel.from_pretrained(name, trust_remote_code=True)
-        self.pooling = QueryAttentionPooling(hidden_dimension)
+        self.pooling = SelfAttentionPooling(embedding_dimension)
 
     def encode(
-        self, sequence: Tensor, attention_mask: Tensor, return_sequence: bool = False
+        self,
+        sequence: Tensor,
+        attention_mask: Optional[Tensor] = None,
+        return_sequence: bool = False,
     ) -> Tensor:
         """
         Encode the input sequence using DNABERT and apply attention pooling.
@@ -35,7 +39,7 @@ class Dnabert2Encoder(Encoder):
 
     @property
     def encoding_size(self) -> int:
-        return self.hidden_dimension
+        return self.embedding_dimension
 
 
 class FrozenDnabert2Encoder(Encoder, FrozenModel):
@@ -45,7 +49,7 @@ class FrozenDnabert2Encoder(Encoder, FrozenModel):
         self.encoder: nn.Module = AutoModel.from_pretrained(
             name, trust_remote_code=True
         )
-        self.pooling = QueryAttentionPooling(hidden_dimension)
+        self.pooling = SelfAttentionPooling(hidden_dimension)
 
         # Freeze the encoder parameters
         self.freeze()
