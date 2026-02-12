@@ -2,7 +2,7 @@ class LstmConfig:
     embedding_dimension = 256
     hidden_dimension = 512
     number_of_layers = 3
-    dropout = 0.2
+    dropout = 0.1
     bidirectional = True
     number_of_iterations = 20
 
@@ -27,5 +27,5 @@ class TransformerConfig:
     feedforward_dimension = 512
     number_of_layers = 3
     number_of_heads = 4
-    dropout = 0.2
+    dropout = 0.05
     number_of_iterations = 30

@@ -19,7 +19,7 @@ from tarp.services.datasets.classification.multilabel import (
 )
 from tarp.services.datasets.language.masked import MaskedLanguageModelDataset
 from tarp.services.datasets.metric.triplet import MultiLabelOfflineTripletDataset
-from tarp.services.datasource.sequence import (
+from tarp.services.datasources.sequence import (
     FastaSliceSource,
     TabularSequenceSource,
 )
@@ -48,7 +48,6 @@ def pretrain(device: torch.device, encoder: Encoder) -> LanguageModel:
                 key_column="protein_accession.version",
                 start_column="?",
                 end_column="?",
-                orientation_column="orientation",
                 sequence_column="protein_sequence",
             )
         ),
@@ -73,7 +72,6 @@ def pretrain(device: torch.device, encoder: Encoder) -> LanguageModel:
                 key_column="protein_accession.version",
                 start_column="?",
                 end_column="?",
-                orientation_column="orientation",
             )
         ),
         tokenizer=CharacterTokenizer(),
@@ -145,7 +143,6 @@ def finetune(device: torch.device, encoder: Encoder) -> ClassificationModel:
                 key_column="protein_accession.version",
                 start_column="?",
                 end_column="?",
-                orientation_column="orientation",
                 sequence_column="protein_sequence",
             )
         ),
@@ -173,7 +170,6 @@ def finetune(device: torch.device, encoder: Encoder) -> ClassificationModel:
                 key_column="protein_accession.version",
                 start_column="?",
                 end_column="?",
-                orientation_column="orientation",
                 sequence_column="protein_sequence",
             )
         ),

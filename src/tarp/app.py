@@ -8,7 +8,7 @@ from tarp.cli.logging import Console
 from tarp.config import TransformerConfig
 from tarp.model.backbone.untrained.transformer import TransformerEncoder
 from tarp.model.finetuning.classification import ClassificationModel
-from tarp.services.datasource.sequence import FastaSliceSource, TabularSequenceSource
+from tarp.services.datasources.sequence import FastaSliceSource, TabularSequenceSource
 from tarp.services.tokenizers.pretrained.dnabert2 import Dnabert2Tokenizer
 from tarp.services.training.pipelines import Pipeline
 from tarp.services.training.pipelines.stage.finetuning.multilabel import (
@@ -103,7 +103,7 @@ def main() -> None:
     pipeline = Pipeline(encoder, run_id=run_id, tokenizer=tokenizer)
 
     pipeline = pipeline >> MaskedLanguageModelPretrainingStage(
-        run_id, device
+        run_id, device, 15
     ).with_sources(
         train_source=FastaSliceSource(
             directory=Path("temp/data/external/sequences/nucleotides"),
@@ -111,7 +111,6 @@ def main() -> None:
             key_column="genomic_nucleotide_accession.version",
             start_column="start_position_on_the_genomic_accession",
             end_column="end_position_on_the_genomic_accession",
-            orientation_column="orientation",
             sequence_column="dna_sequence",
         ),
         valid_source=FastaSliceSource(
@@ -120,7 +119,6 @@ def main() -> None:
             key_column="genomic_nucleotide_accession.version",
             start_column="start_position_on_the_genomic_accession",
             end_column="end_position_on_the_genomic_accession",
-            orientation_column="orientation",
             sequence_column="dna_sequence",
         ),
     )
@@ -129,7 +127,7 @@ def main() -> None:
 
     Console.info("Starting fine-tuning phase")
 
-    pipeline = pipeline >> TripletMetricFinetuningStage(run_id, device).with_sources(
+    pipeline = pipeline >> TripletMetricFinetuningStage(run_id, device, 6).with_sources(
         train_source=(
             TabularSequenceSource(
                 source=Path("temp/data/processed/card_amr.train.parquet")
@@ -140,7 +138,6 @@ def main() -> None:
                 key_column="genomic_nucleotide_accession.version",
                 start_column="start_position_on_the_genomic_accession",
                 end_column="end_position_on_the_genomic_accession",
-                orientation_column="orientation",
                 sequence_column="dna_sequence",
             )
         ),
@@ -154,14 +151,13 @@ def main() -> None:
                 key_column="genomic_nucleotide_accession.version",
                 start_column="start_position_on_the_genomic_accession",
                 end_column="end_position_on_the_genomic_accession",
-                orientation_column="orientation",
                 sequence_column="dna_sequence",
             )
         ),
     )
 
     pipeline = pipeline >> MultiLabelClassificationFinetuningStage(
-        run_id, device
+        run_id, device, 15
     ).with_sources(
         train_source=(
             TabularSequenceSource(
@@ -173,7 +169,6 @@ def main() -> None:
                 key_column="genomic_nucleotide_accession.version",
                 start_column="start_position_on_the_genomic_accession",
                 end_column="end_position_on_the_genomic_accession",
-                orientation_column="orientation",
                 sequence_column="dna_sequence",
             )
         ),
@@ -187,7 +182,6 @@ def main() -> None:
                 key_column="genomic_nucleotide_accession.version",
                 start_column="start_position_on_the_genomic_accession",
                 end_column="end_position_on_the_genomic_accession",
-                orientation_column="orientation",
                 sequence_column="dna_sequence",
             )
         ),

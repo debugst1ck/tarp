@@ -26,3 +26,7 @@ class Dnabert2Tokenizer(Tokenizer):
     @property
     def mask_token_id(self) -> int:
         return 4
+
+    @property
+    def cls_token_id(self) -> int:
+        return 1

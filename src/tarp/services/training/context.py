@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from typing import Optional
 
 import torch
@@ -61,7 +62,7 @@ class TrainerContext:
     def epochs(self) -> int:
         return self.state.epochs
 
-    def record_current_history(self, metrics: dict[str, float]):
+    def record_current_history(self, metrics: Mapping[str, float]):
         self.state.history[self.epoch].update(metrics)
 
     @property

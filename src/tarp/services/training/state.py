@@ -34,4 +34,6 @@ class TrainerState:
         self.epoch = 0
         self.stop_training = False
 
+        self.paused = False
+
         self.shared: dict = shared

@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Optional
 
 import torch
@@ -10,7 +11,7 @@ from tarp.services.datasets.language.masked import MaskedLanguageModelDataset
 from tarp.services.training.trainer import Trainer
 
 
-class MaskedLanguageModelTrainer(Trainer):
+class MaskedLanguageModelTrainer(Trainer[dict[str, Tensor], Tensor, Tensor]):
     def __init__(
         self,
         model: LanguageModel,
@@ -52,8 +53,8 @@ class MaskedLanguageModelTrainer(Trainer):
         )
         self.vocab_size = vocabulary_size
 
-    def training_step(
-        self, batch: dict[str, Tensor]
+    def training_forward(
+        self, batch: dict[str, Tensor], batch_index: int
     ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         sequence = batch["sequence"].to(self.context.device)
         attention_mask = batch["attention_mask"].to(self.context.device)
@@ -70,7 +71,7 @@ class MaskedLanguageModelTrainer(Trainer):
 
     @torch.no_grad()
     def validation_step(
-        self, batch: dict[str, Tensor]
+        self, batch: dict[str, Tensor], batch_index: int
     ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         sequence = batch["sequence"].to(self.context.device)
         attention_mask = batch["attention_mask"].to(self.context.device)
@@ -83,7 +84,7 @@ class MaskedLanguageModelTrainer(Trainer):
         return loss, logits.detach().cpu(), truth.detach().cpu()
 
     def compute_metrics(
-        self, prediction: list[Tensor], expected: list[Tensor], topk: int = 5
+        self, prediction: Sequence[Tensor], expected: Sequence[Tensor], topk: int = 5
     ) -> dict[str, float]:
         correct = 0
         total = 0

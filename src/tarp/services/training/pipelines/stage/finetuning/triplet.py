@@ -25,8 +25,8 @@ from tarp.services.training.trainer.metric.triplet import OfflineTripletMetricTr
 
 
 class TripletMetricFinetuningStage(Stage):
-    def __init__(self, run_id: str, device: torch.device) -> None:
-        super().__init__("Triplet Metric Finetuning", run_id, device)
+    def __init__(self, run_id: str, device: torch.device, epochs: int = 1) -> None:
+        super().__init__("Triplet Metric Finetuning", run_id, device, epochs=epochs)
 
     def run(self, encoder: Encoder, tokenizer: Tokenizer) -> Encoder:
         # Check that sources are set
@@ -44,7 +44,6 @@ class TripletMetricFinetuningStage(Stage):
                 tokenizer,
                 sequence_column="dna_sequence",
                 label_columns=label_columns,
-                maximum_sequence_length=512,
                 augmentation=CompositeAugmentation(
                     [
                         RandomMutation(),
@@ -62,7 +61,6 @@ class TripletMetricFinetuningStage(Stage):
                 tokenizer,
                 sequence_column="dna_sequence",
                 label_columns=label_columns,
-                maximum_sequence_length=512,
             ),
             label_cache=Path("temp/data/cache/labels_cache_valid.parquet"),
         )
@@ -86,7 +84,7 @@ class TripletMetricFinetuningStage(Stage):
                 multi_triplet_optimizer, T_0=3, T_mult=2
             ),
             device=self.device,
-            epochs=6,
+            epochs=self.epochs,
             num_workers=4,
             batch_size=64,
             accumulation_steps=4,

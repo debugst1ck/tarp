@@ -4,12 +4,14 @@ from typing import Optional
 import torch
 
 from tarp.model.backbone import Encoder
-from tarp.services.datasource.sequence import SequenceDataSource
+from tarp.services.datasources.sequence import SequenceDataSource
 from tarp.services.tokenizers import Tokenizer
 
 
 class Stage(ABC):
-    def __init__(self, name: str, run_id: str, device: torch.device) -> None:
+    def __init__(
+        self, name: str, run_id: str, device: torch.device, epochs: int = 1
+    ) -> None:
         self.name = name
         self.run_id = run_id
         self.device = device
@@ -17,6 +19,7 @@ class Stage(ABC):
         self.train_source: Optional[SequenceDataSource] = None
         self.valid_source: Optional[SequenceDataSource] = None
         self._model: Optional[torch.nn.Module] = None
+        self.epochs = epochs
 
     def with_sources(
         self, train_source: SequenceDataSource, valid_source: SequenceDataSource

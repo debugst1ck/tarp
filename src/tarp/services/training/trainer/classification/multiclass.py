@@ -1,22 +1,23 @@
+from collections.abc import Mapping, Sequence
 from typing import Optional
 
 import torch
 from torch import Tensor, nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
-from torch.utils.data import Dataset
 
 from tarp.model.finetuning.classification import ClassificationModel
+from tarp.services.datasets.classification import ClassificationDataset
 from tarp.services.evaluation.classification.multilabel import MultiLabelMetrics
 from tarp.services.training.trainer import Trainer
 
 
-class MultiClassClassificationTrainer(Trainer):
+class MultiClassClassificationTrainer(Trainer[dict[str, Tensor], Tensor, Tensor]):
     def __init__(
         self,
         model: ClassificationModel,
-        train_dataset: Dataset,
-        valid_dataset: Dataset,
+        train_dataset: ClassificationDataset,
+        valid_dataset: ClassificationDataset,
         optimizer: Optimizer,
         scheduler: Optional[LRScheduler],
         device: torch.device,
@@ -58,8 +59,8 @@ class MultiClassClassificationTrainer(Trainer):
             MultiLabelMetrics()
         )  # Reuse MultiLabelMetrics for multi-class as well
 
-    def training_step(
-        self, batch: dict[str, Tensor]
+    def training_forward(
+        self, batch: dict[str, Tensor], batch_index: int
     ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         inputs = batch["sequence"].to(self.context.device)
         labels = batch["labels"].to(self.context.device)
@@ -69,7 +70,7 @@ class MultiClassClassificationTrainer(Trainer):
         return loss, logits.detach().cpu(), labels.detach().cpu()
 
     def validation_step(
-        self, batch: dict[str, Tensor]
+        self, batch: dict[str, Tensor], batch_index: int
     ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         inputs = batch["sequence"].to(self.context.device)
         labels = batch["labels"].to(self.context.device)
@@ -79,6 +80,6 @@ class MultiClassClassificationTrainer(Trainer):
         return loss, logits.detach().cpu(), labels.detach().cpu()
 
     def compute_metrics(
-        self, prediction: list[Tensor], expected: list[Tensor]
-    ) -> dict[str, float]:
-        return self.metrics.compute(prediction, expected)
+        self, prediction: Sequence[Tensor], expected: Sequence[Tensor]
+    ) -> Mapping[str, float]:
+        return self.metrics.compute(list(prediction), list(expected))

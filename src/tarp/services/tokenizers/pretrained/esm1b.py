@@ -22,3 +22,7 @@ class Esm1bTokenizer(Tokenizer):
     @property
     def mask_token_id(self):
         return self.tokenizer.mask_token_id
+
+    @property
+    def cls_token_id(self):
+        return self.tokenizer.cls_token_id

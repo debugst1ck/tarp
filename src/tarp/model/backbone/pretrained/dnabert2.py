@@ -4,6 +4,7 @@ from torch import Tensor, nn
 from transformers import AutoModel
 
 from tarp.model.backbone import Encoder, FrozenModel
+from tarp.model.layers.pooling.bert import CLSPooling
 from tarp.model.layers.pooling.learned import SelfAttentionPooling
 
 
@@ -47,7 +48,7 @@ class FrozenDnabert2Encoder(Encoder, FrozenModel):
         self.encoder: nn.Module = AutoModel.from_pretrained(
             name, trust_remote_code=True
         )
-        self.pooling = SelfAttentionPooling(hidden_dimension)
+        self.pooling = CLSPooling()
 
         # Freeze the encoder parameters
         self.freeze()

@@ -1,13 +1,15 @@
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from collections.abc import Mapping
+from typing import Generic, Optional, Sequence
 
 import torch
 from torch import Tensor, nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
 from tarp.cli.logging import Console
+from tarp.services.datasets import SequenceDataset
 from tarp.services.training.callbacks import Callback
 from tarp.services.training.callbacks.monitoring import (
     EarlyStopping,
@@ -17,14 +19,15 @@ from tarp.services.training.context import TrainerContext
 from tarp.services.training.loops.training import TrainingLoop
 from tarp.services.training.loops.validation import ValidationLoop
 from tarp.services.training.state import TrainerState
+from tarp.typing.trainer import BatchT, PredT, TargetT
 
 
-class Trainer(ABC):
+class Trainer(ABC, Generic[BatchT, PredT, TargetT]):
     def __init__(
         self,
         model: nn.Module,
-        train_dataset: Dataset,
-        valid_dataset: Dataset,
+        train_dataset: SequenceDataset,
+        valid_dataset: SequenceDataset,
         optimizer: Optimizer,
         scheduler: Optional[LRScheduler],
         device: torch.device,
@@ -81,6 +84,7 @@ class Trainer(ABC):
             num_workers=num_workers,
             pin_memory=True if persistent_workers else False,
             persistent_workers=persistent_workers,
+            collate_fn=train_dataset.collate_function,
         )
         self.validation_dataloader = DataLoader(
             valid_dataset,
@@ -89,13 +93,14 @@ class Trainer(ABC):
             num_workers=num_workers,
             pin_memory=True if persistent_workers else False,
             persistent_workers=persistent_workers,
+            collate_fn=valid_dataset.collate_function,
         )
 
         self.callbacks = callbacks
 
         self.training_loop = TrainingLoop(
             context=self.context,
-            forward=self.training_step,
+            forward=self.training_forward,
             backpropagation=self.backpropagation,
             optimization=self.optimization,
             callbacks=self.callbacks,
@@ -114,9 +119,9 @@ class Trainer(ABC):
                 hook(self.context, **kwargs)
 
     @abstractmethod
-    def training_step(
-        self, batch: dict[str, Any]
-    ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
+    def training_forward(
+        self, batch: BatchT, batch_index: int
+    ) -> tuple[Tensor, Optional[PredT], Optional[TargetT]]:
         """
         Perform a single training step.
 
@@ -128,8 +133,8 @@ class Trainer(ABC):
     @torch.no_grad()
     @abstractmethod
     def validation_step(
-        self, batch: dict[str, Any]
-    ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
+        self, batch: BatchT, batch_index: int
+    ) -> tuple[Tensor, Optional[PredT], Optional[TargetT]]:
         """
         Perform a single validation step.
 
@@ -139,8 +144,8 @@ class Trainer(ABC):
         raise NotImplementedError
 
     def compute_metrics(
-        self, prediction: list[Tensor], expected: list[Tensor]
-    ) -> dict[str, float]:
+        self, prediction: Sequence[PredT], expected: Sequence[TargetT]
+    ) -> Mapping[str, float]:
         """
         Compute metrics given logits and true labels.
 

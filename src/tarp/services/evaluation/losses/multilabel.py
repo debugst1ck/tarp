@@ -8,93 +8,68 @@ from tarp.services.evaluation import Reduction
 
 
 class AsymmetricFocalLoss(nn.Module):
+    """
+    Asymmetric Focal Loss for Multi-Label Classification.
+
+    Reference:
+    - Improving Object Detection with One-Sided Unsupervised Domain Adaptation [Bodla et al., 2017](https://arxiv.org/abs/1708.02002)
+    """
+
     def __init__(
         self,
-        gamma_neg: float = 4,
-        gamma_pos: float = 1,
+        gamma_neg: float = 4.0,
+        gamma_pos: float = 1.0,
         clip: float = 0.05,
-        epsilon: float = 1e-8,
-        disable_torch_grad_focal_loss: bool = True,
         reduction: Reduction = Reduction.MEAN,
         class_weights: Optional[Tensor] = None,
     ):
         """
-        Asymmetric Loss for multi-label classification.
-
-        :param float gamma_neg: focusing parameter for negative samples, higher values put more focus on hard negatives
-        :param float gamma_pos: focusing parameter for positive samples, higher values put more focus on hard positives
-        :param float clip: if > 0, adds a small value to the negative logits before applying sigmoid, helps with extreme negatives
-        :param float epsilon: small value to avoid log(0)
-        :param bool disable_torch_grad_focal_loss: if True, disables gradient computation for focal loss part to save memory
-        :param str reduction: reduction method to apply to the output loss ('none', 'mean', 'sum')
+        :param float gamma_neg: Focusing parameter for negative samples.
+        :param float gamma_pos: Focusing parameter for positive samples.
+        :param float clip: Optional clipping value for logits of negative samples.
+        :param Reduction reduction: Reduction method to apply to the output.
+        :param class_weights: Optional tensor of shape [num_classes] for per-class weighting.
         """
         super().__init__()
         self.gamma_neg = gamma_neg
         self.gamma_pos = gamma_pos
         self.clip = clip
-        self.disable_torch_grad_focal_loss = disable_torch_grad_focal_loss
-        self.epsilon = epsilon
         self.reduction = reduction
-        self.class_weights = class_weights
 
-    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        """
-        Asymmetric Loss for multi-label classification.
-        Args:
-            logits: raw model outputs (before sigmoid), shape (batch, num_labels)
-            targets: binary targets, same shape
-        """
-        # Use 'probs' for the sigmoid output to indicate they are probabilities
-        probs = torch.sigmoid(logits)
+        self.class_weights: Optional[Tensor]  # Typing for pyright
+        if class_weights is not None:
+            self.register_buffer("class_weights", class_weights)
+        else:
+            self.class_weights = None
 
-        # Clearly distinguish positive and negative probabilities
-        probs_pos = probs
-        probs_neg: Tensor = 1 - probs
-
-        # Asymmetric Clipping
-        if self.clip is not None and self.clip > 0:
-            # Use 'clamped_probs_neg' to show the effect of clipping
-            probs_neg = (probs_neg + self.clip).clamp(max=1)
-
-        # Basic CE calculation
-        # Use 'log_likelihood' to describe the loss components
-        log_likelihood_pos = targets * torch.log(probs_pos.clamp(min=self.epsilon))
-        log_likelihood_neg: Tensor = (1 - targets) * torch.log(
-            probs_neg.clamp(min=self.epsilon)
-        )
-
-        # Combine the positive and negative parts into a single loss
-        loss = log_likelihood_pos + log_likelihood_neg
-
-        # Asymmetric Focusing
-        if self.gamma_neg > 0 or self.gamma_pos > 0:
-            if self.disable_torch_grad_focal_loss:
-                torch.set_grad_enabled(False)
-
-            # Use 'pt' for probability-target products, a common notation
-            pt_pos = probs_pos * targets
-            pt_neg = probs_neg * (1 - targets)
-            pt = pt_pos + pt_neg
-
-            # 'gamma_for_each_class' is more descriptive than 'one_sided_gamma'
-            gamma_for_each_class = self.gamma_pos * targets + self.gamma_neg * (
-                1 - targets
+    def forward(self, logits: Tensor, targets: Tensor) -> Tensor:
+        # Optional asymmetric clipping on logits
+        if self.clip > 0:
+            logits = torch.where(
+                targets == 0,
+                logits + self.clip,
+                logits,
             )
+        # Stable BCE
+        bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
 
-            # 'focusing_factor' is a better name for the weight
-            focusing_factor = torch.pow(1 - pt, gamma_for_each_class)
-
-            if self.disable_torch_grad_focal_loss:
-                torch.set_grad_enabled(True)
-
-            loss *= focusing_factor
-
-        # Apply class weights
+        # Apply class weights if provided -> shape [batch_size, num_classes]
         if self.class_weights is not None:
-            loss *= self.class_weights.to(loss.device).unsqueeze(0)
+            bce = bce * self.class_weights.unsqueeze(0)
 
-        # Apply reduction
-        loss = -loss
+        probabilities = torch.sigmoid(logits)
+
+        # Probabilities of the true class
+        probabilities_true = probabilities * targets + (1 - probabilities) * (
+            1 - targets
+        )
+        gamma = self.gamma_pos * targets + self.gamma_neg * (1 - targets)
+
+        # Focal weights should NOT receive gradients
+        with torch.no_grad():
+            focal_weight = torch.pow(1 - probabilities_true, gamma)
+
+        loss = focal_weight * bce
         match self.reduction:
             case Reduction.MEAN:
                 return loss.mean()

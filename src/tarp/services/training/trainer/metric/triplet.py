@@ -1,28 +1,32 @@
+from collections.abc import Sequence
 from typing import Optional
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
-from torch.utils.data import Dataset
 
 from tarp.model.finetuning.metric.triplet import TripletMetricModel
+from tarp.services.datasets.metric.triplet import MultiLabelOfflineTripletDataset
 from tarp.services.training.trainer import Trainer
 
 
-class OfflineTripletMetricTrainer(Trainer):
+class OfflineTripletMetricTrainer(
+    Trainer[dict[str, dict[str, Tensor]], tuple[Tensor, Tensor, Tensor], None]
+):
     def __init__(
         self,
         model: TripletMetricModel,
-        train_dataset: Dataset,
-        valid_dataset: Dataset,
+        train_dataset: MultiLabelOfflineTripletDataset,
+        valid_dataset: MultiLabelOfflineTripletDataset,
         optimizer: Optimizer,
         scheduler: Optional[LRScheduler],
         device: torch.device,
         batch_size: int = 32,
         epochs: int = 10,
         max_grad_norm: float = 1.0,
-        margin: float = 1.0,
+        margin: float = 2.0,
         num_workers: int = 0,
         criterion: Optional[nn.Module] = None,
         accumulation_steps: int = 1,
@@ -57,9 +61,9 @@ class OfflineTripletMetricTrainer(Trainer):
             mask = mask.to(self.context.device)
         return sequence, mask
 
-    def training_step(
-        self, batch: dict[str, Tensor]
-    ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
+    def training_forward(
+        self, batch: dict[str, dict[str, Tensor]], batch_index: int
+    ) -> tuple[Tensor, tuple[Tensor, Tensor, Tensor], None]:
         anchor, anchor_mask = self._move_item_to_device(batch["anchor"])
         positive, positive_mask = self._move_item_to_device(batch["positive"])
         negative, negative_mask = self._move_item_to_device(batch["negative"])
@@ -85,8 +89,8 @@ class OfflineTripletMetricTrainer(Trainer):
         )
 
     def validation_step(
-        self, batch: dict[str, Tensor]
-    ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
+        self, batch: dict[str, dict[str, Tensor]], batch_index: int
+    ) -> tuple[Tensor, tuple[Tensor, Tensor, Tensor], None]:
         anchor, anchor_mask = self._move_item_to_device(batch["anchor"])
         positive, positive_mask = self._move_item_to_device(batch["positive"])
         negative, negative_mask = self._move_item_to_device(batch["negative"])
@@ -99,6 +103,10 @@ class OfflineTripletMetricTrainer(Trainer):
             positive_mask=positive_mask,
             negative_mask=negative_mask,
         )
+
+        anchor_embedding = F.normalize(anchor_embedding, dim=-1)
+        positive_embedding = F.normalize(positive_embedding, dim=-1)
+        negative_embedding = F.normalize(negative_embedding, dim=-1)
 
         loss = self.criterion(anchor_embedding, positive_embedding, negative_embedding)
 
@@ -113,7 +121,9 @@ class OfflineTripletMetricTrainer(Trainer):
         )
 
     def compute_metrics(
-        self, prediction: list[Tensor], expected: list[Tensor]
+        self,
+        prediction: Sequence[tuple[Tensor, Tensor, Tensor]],
+        expected: Sequence[None],
     ) -> dict[str, float]:
         # Prediction is a list of tuples (anchor, positive, negative)
 
@@ -128,7 +138,7 @@ class OfflineTripletMetricTrainer(Trainer):
         negative_distances = torch.norm(anchors - negatives, dim=1)
 
         # Compute metrics
-        margin = self.criterion.margin
+        margin: float = self.criterion.margin  # type: ignore
 
         # Accuracy: fraction of triplets where positive is closer than negative by at least margin
         accuracy = (

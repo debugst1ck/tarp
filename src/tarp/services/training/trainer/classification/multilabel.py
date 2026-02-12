@@ -1,23 +1,26 @@
+from collections.abc import Mapping, Sequence
 from typing import Optional
 
 import torch
 from torch import Tensor, nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
-from torch.utils.data import Dataset
 
 from tarp.model.finetuning.classification import ClassificationModel
+from tarp.services.datasets.classification.multilabel import (
+    MultiLabelClassificationDataset,
+)
 from tarp.services.evaluation.classification.multilabel import MultiLabelMetrics
 from tarp.services.evaluation.losses.multilabel import AsymmetricFocalLoss
 from tarp.services.training.trainer import Trainer
 
 
-class MultiLabelClassificationTrainer(Trainer):
+class MultiLabelClassificationTrainer(Trainer[dict[str, Tensor], Tensor, Tensor]):
     def __init__(
         self,
         model: ClassificationModel,
-        train_dataset: Dataset,
-        valid_dataset: Dataset,
+        train_dataset: MultiLabelClassificationDataset,
+        valid_dataset: MultiLabelClassificationDataset,
         optimizer: Optimizer,
         scheduler: Optional[LRScheduler],
         device: torch.device,
@@ -59,11 +62,10 @@ class MultiLabelClassificationTrainer(Trainer):
         )
 
         self.criterion = self.criterion.to(device)
+        self.labels = train_dataset.label_columns
 
-        self.metrics = MultiLabelMetrics()
-
-    def training_step(
-        self, batch: dict[str, Tensor]
+    def training_forward(
+        self, batch: dict[str, Tensor], batch_index: int
     ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         inputs = batch["sequence"].to(self.context.device)
         labels = batch["labels"].to(self.context.device)
@@ -73,7 +75,7 @@ class MultiLabelClassificationTrainer(Trainer):
         return loss, logits.detach().cpu(), labels.detach().cpu()
 
     def validation_step(
-        self, batch: dict[str, Tensor]
+        self, batch: dict[str, Tensor], batch_index: int
     ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
         inputs = batch["sequence"].to(self.context.device)
         labels = batch["labels"].to(self.context.device)
@@ -82,5 +84,17 @@ class MultiLabelClassificationTrainer(Trainer):
         loss = self.criterion(logits, labels)
         return loss, logits.detach().cpu(), labels.detach().cpu()
 
-    def compute_metrics(self, logits, labels):
-        return self.metrics.compute(logits, labels)
+    def compute_metrics(
+        self, prediction: Sequence[Tensor], expected: Sequence[Tensor]
+    ) -> Mapping[str, float]:
+        thresholds = torch.zeros(len(self.labels))
+        # Per class thresholds can be set here
+        # Threshold sweeping
+        for label in range(len(self.labels)):
+            for threshold in torch.arange(0.1, 0.9, 0.1):
+                metrics = MultiLabelMetrics(threshold).compute(prediction, expected)
+                # Example: maximize F1 score
+                if metrics["f1"] > thresholds[label]:
+                    thresholds[label] = threshold
+
+        return MultiLabelMetrics(0.5).compute(prediction, expected)

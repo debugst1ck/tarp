@@ -16,6 +16,7 @@ class NucleotideTokenizer(Tokenizer):
             "N": 4,  # Unknown nucleotide also <UNK>
             "<PAD>": 5,
             "<MASK>": 6,
+            "<CLS>": 7,
         }
         self.inv_vocab = {v: k for k, v in self.vocab.items()}
 
@@ -26,9 +27,10 @@ class NucleotideTokenizer(Tokenizer):
                 self.lookup[ord(char)] = idx
 
     def tokenize(self, text: str) -> Tensor:
-        bytes = text.encode("ascii", errors="ignore")
         indices = self.lookup[
-            torch.frombuffer(bytearray(bytes), dtype=torch.uint8).long()
+            torch.frombuffer(
+                bytearray(text.encode("ascii", errors="ignore")), dtype=torch.uint8
+            ).long()
         ]
         return indices
 
@@ -43,6 +45,10 @@ class NucleotideTokenizer(Tokenizer):
     @property
     def mask_token_id(self) -> int:
         return self.vocab["<MASK>"]
+
+    @property
+    def cls_token_id(self) -> int:
+        return self.vocab["<CLS>"]
 
 
 class ProteinTokenizer(Tokenizer):
@@ -72,6 +78,7 @@ class ProteinTokenizer(Tokenizer):
             "X",  # Unknown amino acid
             "<PAD>",
             "<MASK>",
+            "<CLS>",
         ]
         self.vocab = {aa: idx for idx, aa in enumerate(amino_acids)}
         self.inv_vocab = {v: k for k, v in self.vocab.items()}
@@ -102,3 +109,7 @@ class ProteinTokenizer(Tokenizer):
     @property
     def mask_token_id(self) -> int:
         return self.vocab["<MASK>"]
+
+    @property
+    def cls_token_id(self) -> int:
+        return self.vocab["<CLS>"]

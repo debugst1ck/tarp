@@ -4,7 +4,8 @@ version = "0.1.0"
 description = "TARP - A deep learning tool for predicting antimicrobial resistance from nucleotide sequences"
 authors = [{ name = "Joel Jacob", email = "j7.jacob@hdr.qut.edu.au" }]
 readme = "README.md"
-license = "Apache-2.0"
+license = { file = "LICENSE" }
+keywords = ["antimicrobial resistance", "deep learning", "bioinformatics", "machine learning"]
 requires-python = ">=3.12"
 
 dependencies = [
@@ -44,6 +45,7 @@ exclude = ["temp*", "tests*"]
 [project.optional-dependencies]
 dev = ["ruff", "pytest"]
 docs = ["sphinx", "sphinx-rtd-theme", "sphinx-autodoc-typehints", "myst-parser"]
+plmarg = ["xgboost"]
 
 [build-system]
 requires = ["setuptools", "wheel"]

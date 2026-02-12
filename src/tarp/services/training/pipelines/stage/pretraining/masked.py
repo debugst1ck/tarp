@@ -19,8 +19,10 @@ from tarp.services.training.trainer.language.masked import MaskedLanguageModelTr
 
 
 class MaskedLanguageModelPretrainingStage(Stage):
-    def __init__(self, run_id: str, device: torch.device) -> None:
-        super().__init__("Masked Language Model Pretraining", run_id, device)
+    def __init__(self, run_id: str, device: torch.device, epochs: int = 1) -> None:
+        super().__init__(
+            "Masked Language Model Pretraining", run_id, device, epochs=epochs
+        )
 
     def run(self, encoder: Encoder, tokenizer: Tokenizer) -> Encoder:
         # Check that sources are set
@@ -32,8 +34,7 @@ class MaskedLanguageModelPretrainingStage(Stage):
             data_source=self.train_source,
             tokenizer=tokenizer,
             sequence_column="dna_sequence",
-            maximum_sequence_length=512,
-            masking_probability=0.15,
+            masking_probability=0.20,
             augmentation=CompositeAugmentation(
                 [
                     RandomMutation(),
@@ -47,7 +48,6 @@ class MaskedLanguageModelPretrainingStage(Stage):
             data_source=self.valid_source,
             tokenizer=tokenizer,
             sequence_column="dna_sequence",
-            maximum_sequence_length=512,
             masking_probability=0.15,
         )
 
@@ -58,17 +58,19 @@ class MaskedLanguageModelPretrainingStage(Stage):
         self._model = language_model
 
         torch.compile(language_model, mode="max-autotune")
+        param_groups = list(
+            language_model.encoder.optimizer_groups(base_learning_rate=2e-4)
+        )
 
-        optimizer_language = AdamW(
-            [
-                *language_model.encoder.optimizer_groups(base_learning_rate=1e-4),
+        if not language_model.tied:
+            param_groups.append(
                 {
                     "params": language_model.language_head.parameters(),
                     "lr": 1e-3,
                     "weight_decay": 1e-2,
-                },
-            ]
-        )
+                }
+            )
+        optimizer_language = AdamW(param_groups)
 
         MaskedLanguageModelTrainer(
             model=language_model,
@@ -77,7 +79,7 @@ class MaskedLanguageModelPretrainingStage(Stage):
             optimizer=optimizer_language,
             scheduler=CosineAnnealingWarmRestarts(optimizer_language, T_0=5, T_mult=2),
             device=self.device,
-            epochs=20,
+            epochs=self.epochs,
             num_workers=4,
             batch_size=64,
             accumulation_steps=4,

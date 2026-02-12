@@ -1,22 +1,24 @@
 from abc import ABC, abstractmethod
-from typing import Callable, Optional
+from collections.abc import Callable, Mapping, Sequence
+from typing import Generic, Optional
 
 from torch import Tensor
 from torch.utils.data import DataLoader
 
 from tarp.services.training.callbacks import Callback
 from tarp.services.training.context import TrainerContext
+from tarp.typing.trainer import BatchT, PredT, TargetT
 
 
-class Loop(ABC):
+class Loop(ABC, Generic[BatchT, PredT, TargetT]):
     def __init__(
         self,
         context: TrainerContext,
         forward: Callable[
-            [dict[str, Tensor]], tuple[Tensor, Optional[Tensor], Optional[Tensor]]
+            [BatchT, int], tuple[Tensor, Optional[PredT], Optional[TargetT]]
         ],
         evaluation: Callable[
-            [list[Tensor], list[Tensor]], dict[str, float]
+            [Sequence[PredT], Sequence[TargetT]], Mapping[str, float]
         ] = lambda prediction, expected: {},
         backpropagation: Callable[[Tensor], None] = lambda loss: None,
         optimization: Callable[[], None] = lambda: None,
@@ -45,17 +47,17 @@ class Loop(ABC):
                 hook(self.context, **kwargs)
 
     @abstractmethod
-    def run(self, epoch: int, dataloader: DataLoader) -> dict[str, float]:
+    def run(self, epoch: int, dataloader: DataLoader) -> Mapping[str, float]:
         raise NotImplementedError
 
     @abstractmethod
     def step(
-        self, batch: dict[str, Tensor], optimize: bool = True
-    ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
+        self, batch: BatchT, batch_index: int, optimize: bool = True
+    ) -> tuple[Tensor, Optional[PredT], Optional[TargetT]]:
         raise NotImplementedError
 
     @abstractmethod
     def manual_step(
-        self, batch: dict[str, Tensor], step_index: int, total_steps: int
-    ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
+        self, batch: BatchT, batch_index: int, total_steps: int
+    ) -> tuple[Tensor, Optional[PredT], Optional[TargetT]]:
         raise NotImplementedError

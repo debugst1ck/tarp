@@ -22,3 +22,7 @@ class CharacterTokenizer(Tokenizer):
         return torch.frombuffer(
             bytearray(text.encode("ascii", "replace")), dtype=torch.uint8
         )
+
+    @property
+    def cls_token_id(self) -> int:
+        return 0x02  # STX character

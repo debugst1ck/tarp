@@ -1,8 +1,12 @@
+from typing import Optional
+
 import torch
-from torch import Tensor, nn
+from torch import Tensor
+
+from tarp.model.layers.positional import AttentionPositionalEncoder
 
 
-class RotaryPositionalEmbedding(nn.Module):
+class RotaryPositionalEmbedding(AttentionPositionalEncoder):
     """
     Rotary Positional Embedding module.
 
@@ -92,6 +96,18 @@ class RotaryPositionalEmbedding(nn.Module):
         self.cosine_cache = angle_rates.cos().unsqueeze(0).unsqueeze(0)
         self.sine_cache = angle_rates.sin().unsqueeze(0).unsqueeze(0)
 
+    def _ensure_cache_length(self, maximum_position_index: int):
+        """
+        Ensure that the cosine and sine caches are computed for the required maximum position index.
+
+        :param maximum_position_index: The maximum position index that needs to be supported
+        :return: None
+        """
+        if (self.cosine_cache is None) or (
+            self.cosine_cache.shape[2]
+        ) < maximum_position_index:
+            self._compute_trigonometric_caches(maximum_position_index + 1)
+
     def _apply_partial_rotary_embedding(
         self, input: Tensor, cosine: Tensor, sine: Tensor, rotary_dimension: int
     ) -> Tensor:
@@ -134,46 +150,69 @@ class RotaryPositionalEmbedding(nn.Module):
         output = torch.cat([output_rotated, input_passive], dim=-1)
         return output
 
-    def rotate_query_or_key(self, input: Tensor):
+    def rotate_query_or_key(
+        self, input: Tensor, positions: Optional[Tensor] = None, offset: int = 0
+    ) -> Tensor:
         """
         Apply rotary positional embeddings to a single tensor (query or key).
 
         :param Tensor input: Input tensor of shape (batch_size, number_of_heads, sequence_length, head_dimension)
+        :param Tensor positions: Optional positions tensor of shape (batch_size, sequence_length)
+        :param int offset: Offset for position calculation
         :return Tensor: Rotated tensor
         """
-        batch_size, number_of_heads, sequence_length, _ = input.shape
-        # Compute caches if needed
-        if (self.cosine_cache is None) or (
-            self.cosine_cache.shape[2] < sequence_length
-        ):
-            self._compute_trigonometric_caches(sequence_length)
+        batch_size, number_of_heads, sequence_length, head_dimension = input.shape
 
-        # Shape caches for broadcasting:
-        # cosine/sine: (1, 1, L, D/2)
-        cosine = self.cosine_cache[:, :, :sequence_length, :]
-        sine = self.sine_cache[:, :, :sequence_length, :]
+        device = input.device
+
+        if positions is None:
+            positions = torch.arange(
+                offset, offset + sequence_length, device=device
+            ).unsqueeze(0)  # (1, sequence_length)
+        else:
+            positions = positions  # (batch_size, sequence_length)
+
+        maximum_position_index = int(positions.max().item())
+
+        self._ensure_cache_length(maximum_position_index)
+
+        # Gather cosine and sine values for the given positions
+        cosine = self.cosine_cache[0, 0, positions].unsqueeze(
+            1
+        )  # (batch_size, 1, sequence_length, head_dimension/2)
+        sine = self.sine_cache[0, 0, positions].unsqueeze(
+            1
+        )  # (batch_size, 1, sequence_length, head_dimension/2)
 
         # Rotary expects (..., D)
         # input: (B, H, L, D)
-        rotated = self._apply_partial_rotary_embedding(
+        return self._apply_partial_rotary_embedding(
             input, cosine, sine, self.rotary_dimension
         )
 
-        return rotated
-
-    def rotate_query_and_key(self, query: Tensor, key: Tensor):
+    def rotate_query_and_key(
+        self,
+        query: Tensor,
+        key: Tensor,
+        positions: Optional[Tensor] = None,
+        offset: int = 0,
+    ) -> tuple[Tensor, Tensor]:
         """
         Apply rotary positional embeddings to query and key tensors.
 
         :param Tensor query: Query tensor of shape (batch_size, number_of_heads, sequence_length, head_dimension)
         :param Tensor key: Key tensor of shape (batch_size, number_of_heads, sequence_length, head_dimension)
+        :param Tensor positions: Optional positions tensor of shape (batch_size, sequence_length)
+        :param int offset: Offset for position calculation
         :return Tuple[Tensor, Tensor]: Tuple of rotated query and key tensors
         """
-        rotated_query = self.rotate_query_or_key(query)
-        rotated_key = self.rotate_query_or_key(key)
+        rotated_query = self.rotate_query_or_key(query, positions, offset)
+        rotated_key = self.rotate_query_or_key(key, positions, offset)
         return rotated_query, rotated_key
 
-    def rotate_input(self, input: Tensor) -> Tensor:
+    def rotate_input(
+        self, input: Tensor, positions: Optional[Tensor] = None, offset: int = 0
+    ) -> Tensor:
         """
         Apply rotary positional embeddings to the input tensor without head dimension split.
 
@@ -181,30 +220,45 @@ class RotaryPositionalEmbedding(nn.Module):
         :return Tensor: Rotated tensor with shape (batch_size, sequence_length, dimension)
         """
         batch_size, sequence_length, dimension = input.shape
+        device = input.device
         # Make sure head dimension is even
 
-        # Compute caches if needed
-        if (self.cosine_cache is None) or (
-            self.cosine_cache.shape[2] < sequence_length
-        ):
-            self._compute_trigonometric_caches(sequence_length)
+        if positions is None:
+            positions = torch.arange(
+                offset, offset + sequence_length, device=device
+            ).unsqueeze(0)  # (1, sequence_length)
+        else:
+            positions = positions  # (batch_size, sequence_length)
 
-        # Shape caches for broadcasting:
-        # Caches: (1, 1, L, D/2) -> (1, L, D/2)
-        cosine = self.cosine_cache[0, 0, :sequence_length]  # (L, D/2)
-        sine = self.sine_cache[0, 0, :sequence_length]  # (L, D/2)
-        cosine = cosine.unsqueeze(0)  # (1, L, D/2)
-        sine = sine.unsqueeze(0)  # (1, L, D/2)
+        maximum_position_index = int(positions.max().item())
+
+        self._ensure_cache_length(maximum_position_index)
+
+        cosine = self.cosine_cache[0, 0, positions]  # (B/1, L, D/2)
+        sine = self.sine_cache[0, 0, positions]  # (B/1, L, D/2)
 
         return self._apply_partial_rotary_embedding(
             input, cosine, sine, self.rotary_dimension
         )
 
-    def forward(self, input: Tensor) -> Tensor:
+    def forward(
+        self,
+        query: Tensor,
+        key: Tensor,
+        *,
+        positions: Optional[Tensor] = None,
+        sequence_length: Optional[int] = None,
+        offset: int = 0,
+    ) -> tuple[Tensor, Tensor, Optional[Tensor]]:
         """
-        Apply rotary positional embeddings to the input tensor.
+        Note: This method assumes that the input query and key tensors are already reshaped to (batch_size, number_of_heads, sequence_length, head_dimension).
 
-        :param Tensor input: Input tensor of shape (batch_size, sequence_length, dimension)
-        :return Tensor: Rotated tensor
+        :param q: Query tensor of shape (batch_size, sequence_length, embedding_dimension)
+        :param k: Key tensor of shape (batch_size, sequence_length, embedding_dimension)
+        :param positions: Optional positions tensor of shape (batch_size, sequence_length)
+        :param sequence_length: Optional sequence length
+        :param offset: Offset for position calculation
+        :return: Tuple of (q, k, attention_bias)
         """
-        return self.rotate_input(input)
+        q, k = self.rotate_query_and_key(query, key, positions, offset)
+        return q, k, None

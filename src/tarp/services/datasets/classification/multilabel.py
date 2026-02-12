@@ -1,5 +1,7 @@
+from collections.abc import Sequence
+
 from tarp.services.datasets.classification import ClassificationDataset
-from tarp.services.datasource.sequence import SequenceDataSource
+from tarp.services.datasources.sequence import SequenceDataSource
 from tarp.services.preprocessing.augmentation import Augmentation, NoAugmentation
 from tarp.services.tokenizers import Tokenizer
 
@@ -10,8 +12,7 @@ class MultiLabelClassificationDataset(ClassificationDataset):
         data_source: SequenceDataSource,
         tokenizer: Tokenizer,
         sequence_column: str,
-        label_columns: list[str],
-        maximum_sequence_length: int,
+        label_columns: Sequence[str],
         augmentation: Augmentation = NoAugmentation(),
     ):
         super().__init__(
@@ -19,6 +20,5 @@ class MultiLabelClassificationDataset(ClassificationDataset):
             tokenizer,
             sequence_column,
             label_columns,
-            maximum_sequence_length,
             augmentation,
         )

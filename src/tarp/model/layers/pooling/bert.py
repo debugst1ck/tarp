@@ -1,16 +1,12 @@
+# CLS pooling layer for BERT-like models
+#
 from typing import Optional, Union
 
 import torch
 from torch import Tensor, nn
 
 
-class GlobalMeanPooling(nn.Module):
-    """
-    Global mean pooling layer.
-    Computes the mean of embeddings along the sequence dimension,
-    optionally ignoring padded tokens using an attention mask.
-    """
-
+class CLSPooling(nn.Module):
     def __init__(self):
         super().__init__()
 
@@ -22,21 +18,12 @@ class GlobalMeanPooling(nn.Module):
     ) -> Union[Tensor, tuple[Tensor, Tensor]]:
         """
         :param input: Tensor of shape (batch_size, sequence_length, feature_dimension)
-        :param attention_mask: Optional attention mask of shape (batch_size, sequence_length) with 1 for valid.
-        :param return_attention: Whether to return the attention weights.
+        :param attention_mask: Optional attention mask of shape (batch_size, sequence_length)
+        :param return_attention: Whether to return attention weights.
         :return: Pooled tensor of shape (batch_size, feature_dimension), optionally with attention weights.
         """
-        if attention_mask is not None:
-            # Make sure mask is float
-            mask = attention_mask.unsqueeze(-1).to(
-                input.dtype
-            )  # (batch_size, sequence_length, 1)
-            masked_input = input * mask  # Make sure to zero out padded tokens
-            sum_embeddings = masked_input.sum(dim=1)  # sum over sequence
-            lengths = mask.sum(dim=1)  # number of valid tokens
-            pooled = sum_embeddings / torch.clamp(lengths, min=1e-9)  # avoid div by 0
-        else:
-            pooled = input.mean(dim=1)
+        # Take the first token's embedding
+        pooled = input[:, 0, :]  # shape: (batch_size, feature_dimension)
 
         if return_attention:
             if attention_mask is not None:

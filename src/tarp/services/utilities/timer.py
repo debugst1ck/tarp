@@ -1,6 +1,6 @@
 import time
+from collections.abc import Callable
 from functools import wraps
-from typing import Callable
 
 from tarp.cli.logging import Console
 

@@ -24,12 +24,14 @@ from tarp.services.training.pipelines.stage import Stage
 from tarp.services.training.trainer.classification.multilabel import (
     MultiLabelClassificationTrainer,
 )
-from tarp.utilities.operations import rescale
+from tarp.services.utilities.operations import rescale
 
 
 class MultiLabelClassificationFinetuningStage(Stage):
-    def __init__(self, run_id: str, device: torch.device) -> None:
-        super().__init__("Multi-Label Classification Fine-tuning", run_id, device)
+    def __init__(self, run_id: str, device: torch.device, epochs: int = 1) -> None:
+        super().__init__(
+            "Multi-Label Classification Fine-tuning", run_id, device, epochs=epochs
+        )
 
     def run(self, encoder: Encoder, tokenizer: Tokenizer) -> Encoder:
         # Check that sources are set
@@ -46,7 +48,6 @@ class MultiLabelClassificationFinetuningStage(Stage):
             tokenizer,
             sequence_column="dna_sequence",
             label_columns=label_columns,
-            maximum_sequence_length=512,
             augmentation=CompositeAugmentation(
                 [
                     RandomMutation(),
@@ -61,7 +62,6 @@ class MultiLabelClassificationFinetuningStage(Stage):
             tokenizer,
             sequence_column="dna_sequence",
             label_columns=label_columns,
-            maximum_sequence_length=512,
         )
 
         classification_model = ClassificationModel(
@@ -118,10 +118,10 @@ class MultiLabelClassificationFinetuningStage(Stage):
                 optimizer_classification, T_0=5, T_mult=2
             ),
             criterion=AsymmetricFocalLoss(
-                gamma_neg=1, gamma_pos=3, class_weights=class_weights
+                gamma_neg=4, gamma_pos=1, class_weights=class_weights
             ),
             device=self.device,
-            epochs=15,
+            epochs=self.epochs,
             num_workers=4,
             batch_size=64,
             accumulation_steps=4,

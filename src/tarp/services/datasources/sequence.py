@@ -1,19 +1,19 @@
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
+import numpy as np
 import polars as pl
 import torch
 from Bio import SeqIO
-from Bio.Seq import Seq
 from torch import Tensor
 
 from tarp.cli.logging import Console
 
+
 # Mru cache could be used for caching sequences if needed
-
-
 class SequenceDataSource(ABC):
     """
     Encapsulate file interactions for sequence datasets.
@@ -38,7 +38,7 @@ class SequenceDataSource(ABC):
         """
         raise NotImplementedError
 
-    def batch(self, indices: list[int]) -> list[dict]:
+    def batch(self, indices: Sequence[int]) -> Sequence[dict]:
         """
         Retrieve multiple rows from the data source.
 
@@ -103,7 +103,7 @@ class TabularSequenceSource(SequenceDataSource):
             return self.dataframe.row(index, named=True)
         return {}
 
-    def batch(self, indices: list[int]) -> list[dict]:
+    def batch(self, indices: Sequence[int]) -> Sequence[dict]:
         if self.dataframe is not None:
             return self.dataframe.filter(pl.col("index").is_in(indices)).rows(
                 named=True
@@ -159,7 +159,8 @@ class FastaDirectorySource(SequenceDataSource):
             return {}
 
         with open(fasta_path, "r") as handle:
-            row: dict[str, Any] = self.dataframe[index].to_dict(as_series=False)
+            row = self.dataframe[index].to_dict(as_series=False)
+            row: dict[str, Any] = dict(row)
             row[self.sequence_column] = "".join(
                 str(record.seq) for record in SeqIO.parse(handle, "fasta")
             )
@@ -177,7 +178,7 @@ class CombinationSource(SequenceDataSource):
 
     def _compute_cumulative_heights(self) -> Tensor:
         heights = torch.tensor(
-            [source.height for source in self.sources], dtype=torch.long
+            [0] + [source.height for source in self.sources], dtype=torch.long
         )
         return torch.cumsum(heights, dim=0)
 
@@ -186,65 +187,33 @@ class CombinationSource(SequenceDataSource):
         return sum(source.height for source in self.sources)
 
     def retrieve(self, index: int) -> dict:
-        source_index, local_index = self._get_source_and_local_index(index)
-        if 0 <= source_index < len(self.sources):
-            return self.sources[source_index].retrieve(local_index)
-        raise IndexError("Index out of range for combined data sources.")
-
-    def _get_source_and_local_index(self, index: int) -> tuple[int, int]:
-        # bounds check
-        if index < 0 or index >= int(self.height):
-            raise IndexError(f"Index {index} out of range (0..{self.height - 1})")
-
-        # make a scalar tensor on same device as cumulative heights
-        index_t: Tensor = torch.tensor(
-            index,
-            device=self._cumulative_heights.device,
-            dtype=self._cumulative_heights.dtype,
+        source_index = int(
+            torch.searchsorted(self._cumulative_heights, index, right=True) - 1
         )
-        source_index = torch.bucketize(index_t, self._cumulative_heights, right=True)
+        local_index = index - int(self._cumulative_heights[source_index])
+        return self.sources[source_index].retrieve(local_index)
 
-        previous_cumulative_height = torch.where(
-            source_index == 0,
-            torch.tensor(0, device=self._cumulative_heights.device),
-            self._cumulative_heights[source_index - 1],
+    def batch(self, indices: Sequence[int]) -> Sequence[dict]:
+        # We need to preserve the order of indices
+        indices_t = torch.as_tensor(indices, dtype=torch.long)
+        # Bucketize indices by source
+        source_indices = (
+            torch.bucketize(indices_t, self._cumulative_heights, right=True) - 1
         )
-
-        local_index = index_t - previous_cumulative_height
-
-        return int(source_index.item()), int(local_index.item())
-
-    def batch(self, indices: list[int]) -> list[dict]:
-        """
-        Efficiently batch indices across multiple sources, preserving input order.
-        """
-        if not indices:
-            return []
-
-        indices_t: Tensor = torch.as_tensor(indices)
-
-        source_indices: Tensor = torch.bucketize(
-            indices_t, self._cumulative_heights, right=True
-        )
-        previous_cumulative_height = torch.cat(
-            [torch.tensor([0]), self._cumulative_heights]
-        )
-        local_indices = indices_t - previous_cumulative_height[source_indices]
-
-        results = [{} for _ in range(len(indices_t))]
-
-        unique_sources: Tensor = torch.unique(source_indices)
-        for source_index in unique_sources:
+        # Compute local indices within each source
+        local_indices = indices_t - self._cumulative_heights[source_indices]
+        # Prepare output buffer
+        results: list[dict] = [{} for _ in range(len(indices))]
+        for source_index in torch.unique(source_indices):
             mask = source_indices == source_index
             positions = torch.nonzero(mask, as_tuple=False).squeeze(1)
             source_local_indices = local_indices[mask].tolist()
             batch_results = self.sources[int(source_index.item())].batch(
                 source_local_indices
             )
-
-            for position, result in zip(positions.tolist(), batch_results):
-                results[position] = result
-
+            # Assign batch results to original positions
+            for global_position, result in zip(positions.tolist(), batch_results):
+                results[global_position] = result
         return results
 
 
@@ -263,7 +232,7 @@ class InMemorySequenceSource(SequenceDataSource):
     def retrieve(self, index: int) -> dict:
         return self.dataframe.row(index, named=True)
 
-    def batch(self, indices: list[int]) -> list[dict]:
+    def batch(self, indices: Sequence[int]) -> Sequence[dict]:
         return self.dataframe.filter(pl.col("index").is_in(indices)).rows(named=True)
 
 
@@ -279,7 +248,6 @@ class FastaSliceSource(SequenceDataSource):
         key_column: str,
         start_column: str,
         end_column: str,
-        orientation_column: Optional[str] = None,
         sequence_column: str = "sequence",
     ):
         self.directory = directory
@@ -287,7 +255,6 @@ class FastaSliceSource(SequenceDataSource):
         self.key_column = key_column
         self.start_column: str | None = start_column
         self.end_column: str | None = end_column
-        self.orientation_column = orientation_column
         self.sequence_column = sequence_column
 
         self.df = (
@@ -311,11 +278,11 @@ class FastaSliceSource(SequenceDataSource):
 
         self._fasta_map = {p.stem: p for p in self.directory.glob("*.fasta")}
 
-    @lru_cache(maxsize=32)
-    def _load_sequence(self, key: str) -> Seq:
+    @lru_cache(maxsize=1024)
+    def _load_sequence(self, key: str) -> str:
         return self._load_sequence_uncached(key)
 
-    def _load_sequence_uncached(self, key: str) -> Seq:
+    def _load_sequence_uncached(self, key: str) -> str:
         """
         Load a full genome sequence from FASTA.
 
@@ -327,7 +294,8 @@ class FastaSliceSource(SequenceDataSource):
             raise FileNotFoundError(f"No FASTA found for {key}")
 
         with open(fasta_path) as handle:
-            return [rec.seq for rec in SeqIO.parse(handle, "fasta")][0]
+            rec = next(SeqIO.parse(handle, "fasta"))
+            return str(rec.seq)
 
     @property
     def height(self) -> int:
@@ -336,64 +304,63 @@ class FastaSliceSource(SequenceDataSource):
     def retrieve(self, index: int) -> dict:
         row = self.df.row(index, named=True)
         key = row[self.key_column]
-        start = row[self.start_column] if self.start_column in row else None
-        end = row[self.end_column] if self.end_column in row else None
-        orientation = (
-            row.get(self.orientation_column, "+") if self.orientation_column else "+"
-        )
+        start = row.get(self.start_column) if self.start_column else None
+        end = row.get(self.end_column) if self.end_column else None
 
         if key not in self._fasta_map:
             raise FileNotFoundError(f"No FASTA found for {key}")
 
         full_sequence = self._load_sequence(key)
 
+        # Cast to str for compatibility with slicing operations
+        full_sequence = str(full_sequence)
+
         if start is None or end is None:
             sequence = full_sequence
         else:
             sequence = full_sequence[start:end]
-
-        if orientation == "-":
-            sequence = sequence.reverse_complement()
-
-        row[self.sequence_column] = str(sequence)
+        row[self.sequence_column] = sequence
         return row
 
-    def batch(self, indices: list[int]) -> list[dict]:
+    def batch(self, indices: Sequence[int]) -> Sequence[dict]:
+        # Torch based batch implementation for efficiency
         subset = self.df[indices]
-        groups = subset.partition_by(self.key_column, as_dict=True)
+        keys = subset[self.key_column].to_numpy()
+        starts = subset[self.start_column].to_numpy() if self.start_column else None
+        ends = subset[self.end_column].to_numpy() if self.end_column else None
 
-        results = []
-        for key, group in groups.items():
-            if key[0] not in self._fasta_map:
+        # Prepare output buffer
+        results = [{} for _ in range(len(indices))]
+
+        # Group by keys to minimize file reads, use torch.unique
+        unique_keys, inverse_indices = np.unique(keys, return_inverse=True)
+
+        for global_index, key in enumerate(unique_keys):
+            if key not in self._fasta_map:
                 raise FileNotFoundError(
-                    f"No FASTA found for {key[0]} in {self.directory.as_posix()}"
+                    f"No FASTA found for {key} in {self.directory.as_posix()}"
                 )
 
-            full_sequence = self._load_sequence(key[0])
+            # Mask for current key
+            mask = inverse_indices == global_index
+            positions = np.nonzero(mask)[0]
 
-            for row in group.rows(named=True):
-                start = row[self.start_column] if self.start_column else None
-                end = row[self.end_column] if self.end_column else None
-                orientation = (
-                    row.get(self.orientation_column, "+")
-                    if self.orientation_column
-                    else "+"
-                )
+            full_sequence = self._load_sequence(key)
+            if starts is None or ends is None:
+                # No slicing needed, assign full sequence
+                for position in positions.tolist():
+                    row = subset.row(position, named=True)
+                    row[self.sequence_column] = full_sequence
+                    results[position] = row
+            else:
+                group_starts = starts[positions]
+                group_ends = ends[positions]
 
-                if start is None or end is None:
-                    sequence = full_sequence
-                else:
+                for i, position in enumerate(positions.tolist()):
+                    start = int(group_starts[i])
+                    end = int(group_ends[i])
+                    row = subset.row(position, named=True)
                     sequence = full_sequence[start:end]
-
-                if orientation == "-":
-                    sequence = sequence.reverse_complement()
-
-                row[self.sequence_column] = str(sequence)
-                results.append(row)
-        if not len(results) == len(indices):
-            Console.warning(
-                f"Batch retrieval returned {len(results)} results, "
-                f"but {len(indices)} were requested."
-            )
-            exit(1)
+                    row[self.sequence_column] = sequence
+                    results[position] = row
         return results

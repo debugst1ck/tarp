@@ -17,6 +17,7 @@ class Encoder(nn.Module, ABC):
         """
         super().__init__()
 
+    # This one is for correct doc generation
     @abstractmethod
     def encode(
         self,
@@ -32,7 +33,20 @@ class Encoder(nn.Module, ABC):
         :param Tensor return_sequence: A boolean indicating whether to return the full sequence of encoded embeddings or a single pooled embedding.
         :return Tensor: A tensor of shape `(batch_size, encoding_size)` if return_sequence is `False`, or `(batch_size, sequence_length, encoding_size)` if `True`.
         """
-        pass
+        raise NotImplementedError
+
+    # Define forward to call encode cause pytorch forward hooks expect forward method
+    def forward(
+        self,
+        sequence: Tensor,
+        attention_mask: Optional[Tensor] = None,
+        return_sequence: bool = False,
+    ) -> Tensor:
+        return self.encode(
+            sequence=sequence,
+            attention_mask=attention_mask,
+            return_sequence=return_sequence,
+        )
 
     @property
     @abstractmethod

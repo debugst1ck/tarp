@@ -1,6 +1,7 @@
 # Metric Learning Finetuning Module
-from torch import nn, Tensor
 from typing import Optional
+
+from torch import Tensor, nn
 
 from tarp.model.backbone import Encoder
 
@@ -29,8 +30,8 @@ class TripletMetricModel(nn.Module):
         :return: The encoded representations of the anchor, positive, and negative sequences.
         :rtype: tuple[Tensor, Tensor, Tensor]
         """
-        anchor_representation = self.encoder.encode(anchor, anchor_mask)
-        positive_representation = self.encoder.encode(positive, positive_mask)
-        negative_representation = self.encoder.encode(negative, negative_mask)
+        anchor_representation = self.encoder(anchor, anchor_mask)
+        positive_representation = self.encoder(positive, positive_mask)
+        negative_representation = self.encoder(negative, negative_mask)
 
         return anchor_representation, positive_representation, negative_representation

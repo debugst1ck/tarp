@@ -1,6 +1,6 @@
 # Untrained tokenizer implementation
 from abc import ABC, abstractmethod
-from typing import Sequence
+from collections.abc import Sequence
 
 from tarp.services.tokenizers import Tokenizer
 

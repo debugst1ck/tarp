@@ -29,7 +29,7 @@ class ClassificationModel(nn.Module):
         :return: The classification logits.
         :rtype: Tensor
         """
-        pooled_representation = self.encoder.encode(
+        pooled_representation = self.encoder(
             sequence, attention_mask, return_sequence=return_sequence
         )
         return self.classification_head(pooled_representation)

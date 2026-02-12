@@ -1,18 +1,18 @@
 from typing import Optional
 
-from torch import Tensor, nn
+from torch import Tensor
 from transformers import AutoModel
 
 from tarp.model.backbone import Encoder, FrozenModel
-from tarp.model.layers.pooling.learned import SelfAttentionPooling
+from tarp.model.layers.pooling.reductions import GlobalMeanPooling
 
 
 class Esm1bEncoder(Encoder):
-    def __init__(self, model_name="facebook/esm1b_t33_650M_UR50S"):
+    def __init__(self, name="facebook/esm1b_t33_650M_UR50S"):
         super().__init__()
-        self.model = AutoModel.from_pretrained(model_name)
-        self.hidden_size = self.model.config.hidden_size
-        self.pooling = SelfAttentionPooling(self.hidden_size)
+        self.model = AutoModel.from_pretrained(name)
+        self.model_dimension = self.model.config.hidden_size
+        self.pooling = GlobalMeanPooling()
 
     def encode(
         self,
@@ -40,34 +40,32 @@ class Esm1bEncoder(Encoder):
 
     @property
     def encoding_size(self):
-        return self.hidden_size
+        return self.model_dimension
 
 
 class FrozenEsm1bEncoder(Encoder, FrozenModel):
-    def __init__(
-        self, hidden_dimension: int, model_name="facebook/esm1b_t33_650M_UR50S"
-    ):
+    def __init__(self, name="facebook/esm1b_t33_650M_UR50S"):
         super().__init__()
-        self.hidden_dimension = hidden_dimension
-        self.encoder: nn.Module = AutoModel.from_pretrained(model_name)
-        self.pooling = SelfAttentionPooling(hidden_dimension)
+        self.model = AutoModel.from_pretrained(name)
+        self.model_dimension = self.model.config.hidden_size
+        self.pooling = GlobalMeanPooling()
 
         # Freeze the encoder parameters
         self.freeze()
 
     @property
     def encoding_size(self) -> int:
-        return self.hidden_dimension
+        return self.model_dimension
 
     def freeze(self):
-        for param in self.encoder.parameters():
+        for param in self.model.parameters():
             param.requires_grad = False
-        self.encoder.eval()
+        self.model.eval()
 
     def unfreeze(self):
-        for param in self.encoder.parameters():
+        for param in self.model.parameters():
             param.requires_grad = True
-        self.encoder.train()
+        self.model.train()
 
     def encode(
         self,
@@ -75,7 +73,7 @@ class FrozenEsm1bEncoder(Encoder, FrozenModel):
         attention_mask: Optional[Tensor] = None,
         return_sequence: bool = False,
     ) -> Tensor:
-        outputs = self.encoder(
+        outputs = self.model(
             input_ids=sequence,
             attention_mask=attention_mask,
             output_hidden_states=False,
