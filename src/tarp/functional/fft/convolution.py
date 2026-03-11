@@ -90,16 +90,17 @@ def fft_cross_correlation_nd(
     padded_input = F.pad(input_groups, padding_tuple)
 
     # Determine the size for FFT per dimension, use next fast length for normal efficiency
-    # But cuFFT only supports powers of 2, so we use that for GPU tensors
+    # But cuFFT in half precision only supports powers of 2, so we use that for GPU tensors with float16 or bfloat16 dtype
     fft_sizes: tuple[int, ...] = tuple(
         [
-            scipy.fft.next_fast_len(
-                padded_input.size(dimension + 3) + kernel_sizes[dimension] - 1
-            )  # type: ignore
-            if not input.is_cuda
-            else next_power_of_two(
+            next_power_of_two(
                 padded_input.size(dimension + 3) + kernel_sizes[dimension] - 1
             )
+            if padded_input.is_cuda
+            and padded_input.dtype in (torch.float16, torch.bfloat16)
+            else scipy.fft.next_fast_len(
+                padded_input.size(dimension + 3) + kernel_sizes[dimension] - 1
+            )  # type: ignore
             for dimension in range(dimensions)
         ]
     )
@@ -120,7 +121,14 @@ def fft_cross_correlation_nd(
     # Using broadcasting to align dimensions for multiplication
     # Flip is handled by taking conjugate of filter_fft, to achieve cross-correlation
     # input_fft: (B, G, C_i/G, F_1, F_2, ..., F_N) -> (B, G, C_i/G, 1, F_1, F_2, ..., F_N)
-    output_fft = (input_fft.unsqueeze(2) * filter_fft.conj().unsqueeze(0)).sum(dim=3)
+    # output_fft = (input_fft.unsqueeze(2) * filter_fft.conj().unsqueeze(0)).sum(dim=3)
+
+    # Using einsum for clarity:
+    # 'b' batch, 'g' groups, 'i' in_channels_per_group, 'o' out_channels_per_group
+    # '...' represents the spatial frequency dimensions (F_1, F_2, ..., F_N)
+    output_fft = torch.einsum(
+        "bg i..., go i... -> bgo...", input_fft, filter_fft.conj()
+    )
 
     # Inverse rfftn to get time-domain result
     output: Tensor = torch.fft.irfftn(
@@ -167,7 +175,7 @@ def fft_cross_correlation_1d(
     A 1D convolution using FFT.
 
     The output length L_out is computed as:
-    L_out = floor((L + 2*padding - dilation*(K-1) - 1) / stride) + 1
+    `L_out = floor((L + 2*padding - dilation*(K-1) - 1) / stride) + 1`
 
     :param Tensor input: Input tensor of shape `(B, C_i, L)`
     :param Tensor filter: Filter tensor of shape `(C_o, C_i // G, K)`, where G is the number of groups

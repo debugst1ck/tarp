@@ -3,15 +3,13 @@ from typing import Optional
 from torch import Tensor, nn
 
 
-class AttentionPositionalEncoder(nn.Module):
+class TransformativeRelativePositionalEncoder(nn.Module):
     """
     Attention-based Positional Encoder module.
     Meant to be used in Multi-Head Attention layers to encode positional information into the attention mechanism.
 
     Concrete implementations could be:
-    - Alibi positional encodings (e.g., T5-style)
     - Rotary positional embeddings (e.g., RoFormer-style)
-    - Relative positional encodings (e.g., Transformer-XL-style)
     """
 
     def forward(

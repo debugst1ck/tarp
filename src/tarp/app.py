@@ -5,7 +5,8 @@ import torch
 import torch.multiprocessing as mp
 
 from tarp.cli.logging import Console
-from tarp.config import TransformerConfig
+from tarp.config import HyenaConfig, TransformerConfig
+from tarp.model.backbone.untrained.hyena import HyenaEncoder
 from tarp.model.backbone.untrained.transformer import TransformerEncoder
 from tarp.model.finetuning.classification import ClassificationModel
 from tarp.services.datasources.sequence import FastaSliceSource, TabularSequenceSource
@@ -59,27 +60,27 @@ def main() -> None:
 
     tokenizer = Dnabert2Tokenizer()
 
-    encoder = TransformerEncoder(
-        vocabulary_size=tokenizer.vocab_size,
-        embedding_dimension=TransformerConfig.embedding_dimension,
-        feedforward_dimension=TransformerConfig.feedforward_dimension,
-        padding_id=tokenizer.pad_token_id,
-        number_of_layers=TransformerConfig.number_of_layers,
-        number_of_heads=TransformerConfig.number_of_heads,
-        dropout=TransformerConfig.dropout,
-    )
-
-    # encoder = HyenaEncoder(
-    #     vocabulary_size=Dnabert2Tokenizer().vocab_size,
-    #     model_dimension=HyenaConfig.model_dimension,
-    #     padding_id=Dnabert2Tokenizer().pad_token_id,
-    #     number_of_layers=HyenaConfig.number_of_layers,
-    #     number_of_heads=HyenaConfig.number_of_heads,
-    #     recurrence_depth=HyenaConfig.recurrence_depth,
-    #     mixing_width=HyenaConfig.mixing_width,
-    #     local_context_size=HyenaConfig.local_context_size,
-    #     dropout=HyenaConfig.dropout,
+    # encoder = TransformerEncoder(
+    #     vocabulary_size=tokenizer.vocab_size,
+    #     embedding_dimension=TransformerConfig.embedding_dimension,
+    #     feedforward_dimension=TransformerConfig.feedforward_dimension,
+    #     padding_id=tokenizer.pad_token_id,
+    #     number_of_layers=TransformerConfig.number_of_layers,
+    #     number_of_heads=TransformerConfig.number_of_heads,
+    #     dropout=TransformerConfig.dropout,
     # )
+
+    encoder = HyenaEncoder(
+        vocabulary_size=Dnabert2Tokenizer().vocab_size,
+        model_dimension=HyenaConfig.model_dimension,
+        padding_id=Dnabert2Tokenizer().pad_token_id,
+        number_of_layers=HyenaConfig.number_of_layers,
+        number_of_heads=HyenaConfig.number_of_heads,
+        recurrence_depth=HyenaConfig.recurrence_depth,
+        mixing_width=HyenaConfig.mixing_width,
+        local_context_size=HyenaConfig.local_context_size,
+        dropout=HyenaConfig.dropout,
+    )
 
     # Training
     Console.debug(f"Model architecture: {encoder.__class__.__name__}")
@@ -107,7 +108,9 @@ def main() -> None:
     ).with_sources(
         train_source=FastaSliceSource(
             directory=Path("temp/data/external/sequences/nucleotides"),
-            metadata=Path("temp/data/processed/pre_training.parquet"),
+            metadata=Path(
+                "temp/data/processed/pretraining/bacteria_gene_pre_training.parquet"
+            ),
             key_column="genomic_nucleotide_accession.version",
             start_column="start_position_on_the_genomic_accession",
             end_column="end_position_on_the_genomic_accession",
@@ -115,7 +118,9 @@ def main() -> None:
         ),
         valid_source=FastaSliceSource(
             directory=Path("temp/data/external/sequences/nucleotides"),
-            metadata=Path("temp/data/processed/fine_tuning.valid.parquet"),
+            metadata=Path(
+                "temp/data/processed/finetuning/fold_0/test/bacteria_gene_fine_tuning.parquet"
+            ),
             key_column="genomic_nucleotide_accession.version",
             start_column="start_position_on_the_genomic_accession",
             end_column="end_position_on_the_genomic_accession",

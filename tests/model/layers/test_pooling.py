@@ -15,7 +15,7 @@ from tarp.model.layers.pooling.learned import (
         (SelfAttentionPooling, {"feature_dimension": 32}),
         (
             MultiHeadGatedSelfAttentionPooling,
-            {"hidden_dimension": 32, "number_of_heads": 4},
+            {"feature_dimension": 32, "number_of_heads": 4},
         ),
     ],
 )
@@ -45,7 +45,7 @@ def test_pooling_modules_forward_and_shapes(module_class, kwargs):
         (SelfAttentionPooling, {"feature_dimension": 32}),
         (
             MultiHeadGatedSelfAttentionPooling,
-            {"hidden_dimension": 32, "number_of_heads": 4},
+            {"feature_dimension": 32, "number_of_heads": 4},
         ),
     ],
 )
@@ -75,7 +75,7 @@ def test_pooling_attention_masking(module_class, kwargs):
         (SelfAttentionPooling, {"feature_dimension": 32}),
         (
             MultiHeadGatedSelfAttentionPooling,
-            {"hidden_dimension": 32, "number_of_heads": 4},
+            {"feature_dimension": 32, "number_of_heads": 4},
         ),
     ],
 )

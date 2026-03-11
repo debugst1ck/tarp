@@ -26,12 +26,14 @@ class SequenceDataset(ABC, Dataset, Generic[T]):
         tokenizer: Tokenizer,
         sequence_column: str,
         augmentation: Augmentation = NoAugmentation(),
+        maximum_sequence_length: Optional[int] = 2048,
     ):
         self.data_source = data_source
         self.tokenizer = tokenizer
         self.sequence_column = sequence_column
         self.padding_value = tokenizer.pad_token_id
         self.augmentation = augmentation
+        self.maximum_sequence_length = maximum_sequence_length
 
     def __len__(self):
         return self.data_source.height
@@ -73,6 +75,11 @@ class SequenceDataset(ABC, Dataset, Generic[T]):
 
         # Attention mask
         attention_mask = tokenized != self.padding_value
+
+        # Truncate if necessary
+        if self.maximum_sequence_length is not None:
+            tokenized = tokenized[: self.maximum_sequence_length]
+            attention_mask = attention_mask[: self.maximum_sequence_length]
 
         return {"sequence": tokenized, "attention_mask": attention_mask}
 

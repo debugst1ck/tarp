@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from pathlib import Path
 
 import polars as pl
@@ -115,7 +116,7 @@ class MultiLabelOfflineTripletDataset(SequenceDataset[dict[str, dict[str, Tensor
         }
 
     def collate_function(
-        self, batch: list[dict[str, dict[str, Tensor]]]
+        self, batch: Sequence[dict[str, dict[str, Tensor]]]
     ) -> dict[str, dict[str, Tensor]]:
         collated = {"anchor": {}, "positive": {}, "negative": {}}
         for key in ["anchor", "positive", "negative"]:

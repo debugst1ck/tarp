@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from typing import Optional
 
 from tarp.services.datasets.classification import ClassificationDataset
 from tarp.services.datasources.sequence import SequenceDataSource
@@ -14,6 +15,7 @@ class MultiLabelClassificationDataset(ClassificationDataset):
         sequence_column: str,
         label_columns: Sequence[str],
         augmentation: Augmentation = NoAugmentation(),
+        maximum_sequence_length: Optional[int] = 2048,
     ):
         super().__init__(
             data_source,
@@ -21,4 +23,5 @@ class MultiLabelClassificationDataset(ClassificationDataset):
             sequence_column,
             label_columns,
             augmentation,
+            maximum_sequence_length,
         )

@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from typing import Optional
 
 import torch
 from torch import Tensor
@@ -18,12 +19,14 @@ class MaskedLanguageModelDataset(SequenceDataset[dict[str, Tensor]]):
         sequence_column: str,
         augmentation: Augmentation = NoAugmentation(),
         masking_probability: float = 0.15,
+        maximum_sequence_length: Optional[int] = 2048,
     ):
         super().__init__(
             data_source,
             tokenizer,
             sequence_column,
             augmentation,
+            maximum_sequence_length,
         )
         self.mask_token_id = tokenizer.mask_token_id
         self.masking_probability = masking_probability

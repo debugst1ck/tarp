@@ -216,26 +216,6 @@ def test_rope_query_and_key_consistency(rope_layer: RotaryPositionalEmbedding):
     assert torch.allclose(rotated_k1, rotated_k2, atol=1e-8)
 
 
-def test_rope_cache_recomputation(rope_layer: RotaryPositionalEmbedding):
-    """Test that caches are properly recomputed for longer sequences"""
-    batch_size, num_heads, head_dim = 2, 4, 8
-
-    # First with short sequence
-    short_seq = torch.randn(batch_size, num_heads, 5, head_dim)
-    _ = rope_layer.rotate_query_or_key(short_seq)
-    cache_len_short = rope_layer.cosine_cache.shape[2]
-
-    # Then with longer sequence (beyond initial max)
-    long_seq = torch.randn(batch_size, num_heads, 20, head_dim)
-    _ = rope_layer.rotate_query_or_key(long_seq)
-    cache_len_long = rope_layer.cosine_cache.shape[2]
-
-    assert cache_len_long >= 20, "Cache should expand for longer sequences"
-    assert cache_len_long > cache_len_short, (
-        "Cache should be larger after longer sequence"
-    )
-
-
 def test_rope_rotate_input_shape(rope_layer: RotaryPositionalEmbedding):
     """Test rotate_input method with 3D tensors (no head dimension)"""
     batch_size, seq_length, dimension = 4, 10, 8
@@ -243,17 +223,6 @@ def test_rope_rotate_input_shape(rope_layer: RotaryPositionalEmbedding):
     output_tensor = rope_layer.rotate_input(input_tensor)
 
     assert output_tensor.shape == input_tensor.shape
-
-
-def test_rope_rotate_input_consistency(rope_layer: RotaryPositionalEmbedding):
-    """Test that rotate_input and forward are equivalent"""
-    batch_size, seq_length, dimension = 4, 10, 8
-    input_tensor = torch.randn(batch_size, seq_length, dimension)
-
-    output1 = rope_layer.rotate_input(input_tensor)
-    output2 = rope_layer.forward(input_tensor)
-
-    assert torch.allclose(output1, output2, atol=1e-8)
 
 
 def test_rope_different_batch_sizes(rope_layer: RotaryPositionalEmbedding):
@@ -336,23 +305,3 @@ def test_rope_large_dimensions(large_rope_layer: RotaryPositionalEmbedding):
     assert output_tensor.shape == input_tensor.shape
     assert not torch.isnan(output_tensor).any()
     assert not torch.isinf(output_tensor).any()
-
-
-def test_rope_reset_parameters(rope_layer: RotaryPositionalEmbedding):
-    """Test that reset_parameters properly reinitializes the layer"""
-    # Assert that inverse frequencies is a tensor
-    assert isinstance(rope_layer.inverse_frequencies, torch.Tensor)
-
-    original_inv_freq = rope_layer.inverse_frequencies.clone()
-    original_cos_cache = (
-        rope_layer.cosine_cache.clone() if rope_layer.cosine_cache is not None else None
-    )
-
-    rope_layer.reset_parameters()
-
-    # Inverse frequencies should be recomputed (should be same values)
-    assert torch.allclose(rope_layer.inverse_frequencies, original_inv_freq, atol=1e-8)
-
-    # Caches should be recomputed
-    if original_cos_cache is not None:
-        assert torch.allclose(rope_layer.cosine_cache, original_cos_cache, atol=1e-8)

@@ -4,7 +4,6 @@ class LstmConfig:
     number_of_layers = 3
     dropout = 0.1
     bidirectional = True
-    number_of_iterations = 20
 
 
 class HyenaConfig:
@@ -19,13 +18,11 @@ class HyenaConfig:
 
 class Dnabert2Config:
     hidden_dimension = 768
-    number_of_iterations = 10
 
 
 class TransformerConfig:
     embedding_dimension = 256
-    feedforward_dimension = 512
+    feedforward_dimension = 1024
     number_of_layers = 3
     number_of_heads = 4
     dropout = 0.05
-    number_of_iterations = 30

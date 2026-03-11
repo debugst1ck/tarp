@@ -64,7 +64,7 @@ class Trainer(ABC, Generic[BatchT, PredT, TargetT]):
         """
         self.context = TrainerContext(
             TrainerState(
-                model=model.to(device),
+                model=model.to(device, non_blocking=True),
                 optimizer=optimizer,
                 scheduler=scheduler,
                 device=device,

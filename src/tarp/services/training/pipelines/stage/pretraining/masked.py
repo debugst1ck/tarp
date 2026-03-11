@@ -59,7 +59,7 @@ class MaskedLanguageModelPretrainingStage(Stage):
 
         torch.compile(language_model, mode="max-autotune")
         param_groups = list(
-            language_model.encoder.optimizer_groups(base_learning_rate=2e-4)
+            language_model.encoder.optimizer_groups(base_learning_rate=4e-4)
         )
 
         if not language_model.tied:
@@ -80,9 +80,9 @@ class MaskedLanguageModelPretrainingStage(Stage):
             scheduler=CosineAnnealingWarmRestarts(optimizer_language, T_0=5, T_mult=2),
             device=self.device,
             epochs=self.epochs,
-            num_workers=4,
-            batch_size=64,
-            accumulation_steps=4,
+            num_workers=8,
+            batch_size=32,
+            accumulation_steps=8,  # Effective batch of 256
             persistent_workers=(
                 True if mp.get_start_method(allow_none=True) == "spawn" else False
             ),

@@ -10,6 +10,7 @@ class EarlyStopping(Callback):
     def __init__(
         self,
         patience: int = 3,
+        minimum_delta: float = 0.02,
         monitor_metric: str = "validation_loss",
         monitor_mode: Extremum = Extremum.MIN,
     ) -> None:
@@ -18,6 +19,7 @@ class EarlyStopping(Callback):
             float("inf") if monitor_mode == Extremum.MIN else float("-inf")
         )
         self.counter = 0
+        self.minimum_delta = minimum_delta
         self.monitor_metric = monitor_metric
         self.monitor_mode = monitor_mode
 
@@ -26,23 +28,22 @@ class EarlyStopping(Callback):
         if current_value is None:
             return
 
-        if self.best_metric_value is None or (
-            (
-                self.monitor_mode == Extremum.MIN
-                and current_value < self.best_metric_value
-            )
-            or (
-                self.monitor_mode == Extremum.MAX
-                and current_value > self.best_metric_value
-            )
-        ):
+        if self.monitor_mode == Extremum.MIN:
+            is_improvement = current_value < self.best_metric_value - self.minimum_delta
+        else:
+            is_improvement = current_value > self.best_metric_value + self.minimum_delta
+
+        if is_improvement:
             self.best_metric_value = current_value
             self.counter = 0
         else:
             self.counter += 1
+
             if self.counter >= self.patience:
-                Console.info("Early stopping triggered.")
                 context.request_stop()
+                Console.info(
+                    f"Early stopping triggered after {self.patience} epochs without improvement in {self.monitor_metric}."
+                )
 
     def on_training_start(self, context: TrainerContext, **kwargs) -> None:
         Console.debug(f"Monitoring {self.monitor_metric} for early stopping.")

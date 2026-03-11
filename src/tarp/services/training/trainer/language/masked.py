@@ -56,9 +56,11 @@ class MaskedLanguageModelTrainer(Trainer[dict[str, Tensor], Tensor, Tensor]):
     def training_forward(
         self, batch: dict[str, Tensor], batch_index: int
     ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
-        sequence = batch["sequence"].to(self.context.device)
-        attention_mask = batch["attention_mask"].to(self.context.device)
-        truth = batch["truth"].to(self.context.device)
+        sequence = batch["sequence"].to(self.context.device, non_blocking=True)
+        attention_mask = batch["attention_mask"].to(
+            self.context.device, non_blocking=True
+        )
+        truth = batch["truth"].to(self.context.device, non_blocking=True)
 
         # Model forward
         outputs = self.context.model(sequence, attention_mask=attention_mask)
@@ -73,10 +75,14 @@ class MaskedLanguageModelTrainer(Trainer[dict[str, Tensor], Tensor, Tensor]):
     def validation_step(
         self, batch: dict[str, Tensor], batch_index: int
     ) -> tuple[Tensor, Optional[Tensor], Optional[Tensor]]:
-        sequence = batch["sequence"].to(self.context.device)
-        attention_mask = batch["attention_mask"].to(self.context.device)
-        truth = batch["truth"].to(self.context.device)
+        # Move batch to device with non-blocking transfers
+        sequence = batch["sequence"].to(self.context.device, non_blocking=True)
+        attention_mask = batch["attention_mask"].to(
+            self.context.device, non_blocking=True
+        )
+        truth = batch["truth"].to(self.context.device, non_blocking=True)
 
+        # Synchronization point for asynchronous data loading
         outputs = self.context.model(sequence, attention_mask=attention_mask)
         logits = outputs if isinstance(outputs, Tensor) else outputs["logits"]
 

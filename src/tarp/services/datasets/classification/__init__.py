@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from typing import Optional
 
 import torch
 from torch import Tensor
@@ -17,12 +18,14 @@ class ClassificationDataset(SequenceDataset[dict[str, Tensor]]):
         sequence_column: str,
         label_columns: Sequence[str],
         augmentation: Augmentation = NoAugmentation(),
+        maximum_sequence_length: Optional[int] = 2048,
     ):
         super().__init__(
             data_source,
             tokenizer,
             sequence_column,
             augmentation,
+            maximum_sequence_length,
         )
         self.label_columns = label_columns
 
