@@ -1,5 +1,5 @@
 # 🦠 TARP: Transformers for Antimicrobial Resistance Prediction 
-[![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/release/python-380/)
+[![Python Version](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/release/python-3143/)
 [![GitHub License](https://img.shields.io/github/license/debugst1ck/TARP.svg)](https://github.com/debugst1ck/TARP/blob/main/LICENSE)
 [![GitHub Issues](https://img.shields.io/github/issues/debugst1ck/TARP.svg)](https://github.com/debugst1ck/TARP/issues)
 [![GitHub Stars](https://img.shields.io/github/stars/debugst1ck/TARP.svg)](https://github.com/debugst1ck/TARP/stargazers)
