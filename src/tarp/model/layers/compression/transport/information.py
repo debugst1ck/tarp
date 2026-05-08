@@ -10,8 +10,8 @@ from torch import Tensor, nn
 
 class RadialBasisFunctions(Enum):
     """
-    Common radial basis functions for computing assignment scores based on distances between tokens and slot centers.
-    The choice of function and its sharpness parameter can affect how mass is assigned to slots based on distance,
+    Common radial basis functions for computing assignment scores based on distances between tokens and sink centers.
+    The choice of function and its sharpness parameter can affect how mass is assigned to sinks based on distance,
     which in turn can influence the quality of the compression and reconstruction.
     """
 
@@ -25,10 +25,11 @@ class RadialBasisFunctions(Enum):
 
     def __call__(self, distances: Tensor, sharpness: Union[float, Tensor]) -> Tensor:
         """
-        :param Tensor distances: Tensor of shape [B, L, W] representing the distances from each token to the centers of the slots in its local window.
+        :param Tensor distances: Tensor of shape [B, L, W] representing the distances from each token to the centers of the sinks in its local window.
         :param Union[float, Tensor] sharpness: Positive decay factor, either a scalar or a tensor of shape [B, L, 1].
-        :return Tensor: Tensor of shape [B, L, W] representing the log assignment scores for each token to each slot in its local window.
+        :return Tensor: Tensor of shape [B, L, W] representing the log assignment scores for each token to each sink in its local window.
         """
+        epsilon = torch.finfo(distances.dtype).eps
         match self:
             case RadialBasisFunctions.CAUCHY:
                 return -torch.log1p(sharpness * distances.square())
@@ -37,7 +38,9 @@ class RadialBasisFunctions(Enum):
             case RadialBasisFunctions.LAPLACE:
                 return -sharpness * distances.abs()
             case RadialBasisFunctions.EPANECHNIKOV:
-                return torch.clamp(1 - sharpness * distances.square(), min=1e-6).log()
+                return torch.clamp(
+                    1 - sharpness * distances.square(), min=epsilon
+                ).log()
             case RadialBasisFunctions.RATIONAL_POWER:
                 return -sharpness * torch.log1p(distances.abs())
             case RadialBasisFunctions.INVERSE_MULTIQUADRIC:
@@ -45,157 +48,13 @@ class RadialBasisFunctions(Enum):
             case RadialBasisFunctions.TRIWEIGHT:
                 return (
                     3
-                    * (torch.clamp(1 - sharpness * distances.square(), min=1e-6)).log()
+                    * (
+                        torch.clamp(1 - sharpness * distances.square(), min=epsilon)
+                    ).log()
                 )
 
 
-@dataclass
-class LocalCumulativeKernelDensitySequenceCompressionOutput:
-    tokens: Tensor
-    attention_bias: Tensor
-    slot_mask: Tensor
-    slot_mass: Tensor
-    background_mass: Tensor
-    assignment_plan: Tensor
-    window_slot_indices: Tensor
-    payload_density: Tensor
-    coordinate_rate: Tensor
-    total_coordinate_mass: Tensor
-    slot_centers: Tensor
-    budget_usage_fraction: Tensor
-    adaptive_payload_budget: Tensor
-    cumulative_position: Tensor
-    window_slot_mask: Tensor
-    reconstruction_scores: Tensor
-
-    def background_loss(
-        self,
-        minimum_background_mass: float = 0.02,
-        maximum_background_mass: float = 0.10,
-    ) -> Tensor:
-        """
-        Encourage a small but nonzero amount of payload mass to route to background.
-
-        This prevents:
-        1. routing almost everything into slots, even when some information should be dropped
-        2. routing too much payload into background and underusing the slot bottleneck
-
-        :param float minimum_background_mass: Lower bound for acceptable background mass.
-        :param float maximum_background_mass: Upper bound for acceptable background mass.
-        :return Tensor: [B] penalty for background usage outside the target range.
-        """
-        lower = F.relu(minimum_background_mass - self.background_mass)
-        upper = F.relu(self.background_mass - maximum_background_mass)
-        return lower + upper  # L1 penalty [B]
-
-    def density_budget_loss(
-        self,
-        sequence_mask: Tensor,
-        minimum_resolution: float = 0.40,
-        maximum_resolution: float = 0.55,
-    ) -> Tensor:
-        """
-        Encourage the compressor to use a target range of coordinate mass per real sequence token.
-
-        Resolution here means:
-            total_coordinate_mass / number_of_valid_tokens
-
-        This is the main loss that controls how much budget the compressor actually spends.
-        Use bounds that match the intended operating regime of the model.
-
-        :param Tensor sequence_mask: [B, L] boolean mask of valid sequence positions.
-        :param float minimum_resolution: Minimum desired coordinate mass per valid token.
-        :param float maximum_resolution: Maximum desired coordinate mass per valid token.
-        :return Tensor: [B] penalty for using too little or too much coordinate budget.
-        """
-        valid_length = (
-            sequence_mask.bool().sum(dim=-1).to(self.total_coordinate_mass.dtype)
-        )
-
-        actual_resolution = self.total_coordinate_mass / valid_length.clamp_min(1e-6)
-
-        lower = F.relu(minimum_resolution - actual_resolution)
-        upper = F.relu(actual_resolution - maximum_resolution)
-
-        return lower.square() + upper.square()  # L2 penalty [B]
-
-    def entropy_loss(self) -> Tensor:
-        """
-        Shannon entropy of the transport plan to encourage more confident (lower entropy) assignments.
-
-        This penalizes diffuse transport from tokens to multiple nearby slots and
-        encourages more confident slot assignments. Only positions that actually
-        assign nontrivial mass contribute to the loss.
-
-        :return Tensor: [B] average assignment entropy over active payload positions.
-        """
-        window_mass = self.assignment_plan.sum(dim=-1)  # [B, L]
-        window_mask = window_mass > 1e-8  # [B, L]
-
-        distribution = self.assignment_plan / window_mass.unsqueeze(-1).clamp_min(1e-8)
-        distribution = distribution.clamp_min(1e-8)
-
-        entropy = -(distribution * distribution.log()).sum(dim=-1)  # [B, L]
-        entropy = entropy * window_mask.to(entropy.dtype)
-
-        return entropy.sum(dim=-1) / window_mask.sum(dim=-1).clamp_min(1)
-
-    def spatial_dispersion_loss(self) -> Tensor:
-        """
-        Encourage local, geometrically compact assignments within each token's slot window.
-
-        Penalizes the expected squared distance between each token's coordinate and
-        the slot centers it writes to, conditioned on the mass assigned to slots.
-
-        :return Tensor: [B] average spatial dispersion of token-to-slot assignments.
-        """
-        batch_size, _, _ = self.window_slot_indices.shape
-
-        batch_indices = torch.arange(
-            batch_size, device=self.slot_centers.device
-        ).reshape(batch_size, 1, 1)  # [B, 1, 1]
-        window_slot_centers = self.slot_centers[
-            batch_indices, self.window_slot_indices
-        ]  # [B, L, W]
-
-        squared_positional_distances = (
-            self.cumulative_position.unsqueeze(-1) - window_slot_centers
-        ).square()  # [B, L, W]
-
-        window_mass = self.assignment_plan.sum(dim=-1)  # [B, L]
-        window_mask = window_mass > 1e-8  # [B, L]
-
-        expected_dispersion = (self.assignment_plan * squared_positional_distances).sum(
-            dim=-1
-        ) / window_mass.clamp_min(1e-8)  # [B, L]
-
-        expected_dispersion = expected_dispersion * window_mask.to(
-            expected_dispersion.dtype
-        )
-
-        return expected_dispersion.sum(dim=-1) / window_mask.sum(dim=-1).clamp_min(1)
-
-    def auxiliary_losses(self, sequence_mask: Tensor) -> Tensor:
-        """
-        Combine multiple auxillary losses into a single scalar.
-
-        :param Tensor sequence_mask: [B, L] boolean mask of valid sequence positions.
-        :return Tensor: scalar auxillary loss.
-        """
-        background_penalty = self.background_loss()
-        density_budget_penalty = self.density_budget_loss(sequence_mask)
-        entropy_penalty = self.entropy_loss()
-        spatial_dispersion_penalty = self.spatial_dispersion_loss()
-
-        return (
-            0.5 * background_penalty
-            + 1.0 * density_budget_penalty
-            + 0.0 * entropy_penalty
-            + 0.0 * spatial_dispersion_penalty
-        ).mean()  # Average over batch
-
-
-class WindowedSlotCrossAttentionDecoder(nn.Module):
+class WindowedSinkCrossAttentionDecoder(nn.Module):
     def __init__(
         self,
         embedding_dimension: int,
@@ -221,32 +80,32 @@ class WindowedSlotCrossAttentionDecoder(nn.Module):
     def forward(
         self,
         sequence_queries: Tensor,  # [B, L, D]
-        latent_slot_tokens: Tensor,  # [B, T, D]
-        window_slot_indices: Tensor,  # [B, L, W]
-        window_slot_mask: Tensor,  # [B, L, W]
+        latent_tokens: Tensor,  # [B, T, D]
+        window_sink_indices: Tensor,  # [B, L, W]
+        window_mask: Tensor,  # [B, L, W]
         reconstruction_bias: Optional[Tensor] = None,  # [B, L, W]
     ) -> Tensor:
         batch_size, sequence_length, embedding_dimension = sequence_queries.shape
-        _, maximum_slot_count, _ = latent_slot_tokens.shape
-        _, _, local_window = window_slot_indices.shape
+        _, lattice_size, _ = latent_tokens.shape
+        _, _, local_window = window_sink_indices.shape
 
         batch_offsets = (
             torch.arange(
                 batch_size,
                 device=sequence_queries.device,
-                dtype=window_slot_indices.dtype,
+                dtype=window_sink_indices.dtype,
             ).reshape(batch_size, 1, 1)
-            * maximum_slot_count
+            * lattice_size
         )
 
-        flattened_indices = (window_slot_indices + batch_offsets).flatten()
+        flattened_indices = (window_sink_indices + batch_offsets).flatten()
 
-        flattened_tokens = latent_slot_tokens.reshape(
-            batch_size * maximum_slot_count,
+        flattened_tokens = latent_tokens.reshape(
+            batch_size * lattice_size,
             embedding_dimension,
         )
 
-        slot_features = flattened_tokens[flattened_indices].reshape(
+        sink_features = flattened_tokens[flattened_indices].reshape(
             batch_size, sequence_length, local_window, embedding_dimension
         )  # [B, L, W, D]
 
@@ -255,7 +114,7 @@ class WindowedSlotCrossAttentionDecoder(nn.Module):
         )  # [B, L, H, Dh]
 
         keys, values = (
-            self.key_value_projection(slot_features)
+            self.key_value_projection(sink_features)
             .reshape(
                 batch_size,
                 sequence_length,
@@ -271,26 +130,25 @@ class WindowedSlotCrossAttentionDecoder(nn.Module):
             torch.einsum("blhd,blwhd->blhw", queries, keys) / self.scale
         )  # [B, L, H, W]
 
+        epsilon = torch.finfo(scores.dtype).eps
+        negative_infinity = torch.finfo(scores.dtype).min // 8
+
         if reconstruction_bias is not None:
-            scores = scores + reconstruction_bias.unsqueeze(2)  # [B, L, 1, W]
+            scores = scores + reconstruction_bias.unsqueeze(2)  # [B, L, H, W]
 
         scores = scores.masked_fill(
-            ~window_slot_mask.unsqueeze(2), -1e4
+            ~window_mask.unsqueeze(2), negative_infinity
         )  # [B, L, H, W]
 
-        attention_weights = F.softmax(scores, dim=-1)
-        attention_weights = attention_weights * window_slot_mask.unsqueeze(2).to(
-            attention_weights.dtype
+        attention_weights = F.softmax(scores, dim=-1) * window_mask.unsqueeze(2).to(
+            scores.dtype
         )
+
         attention_weights = attention_weights / attention_weights.sum(
             dim=-1, keepdim=True
-        ).clamp_min(1e-8)
+        ).clamp_min(epsilon)
 
-        context = torch.einsum(
-            "blhw,blwhd->blhd", attention_weights, values
-        )  # [B, L, H, Dh]
-
-        context = context.reshape(
+        context = torch.einsum("blhw,blwhd->blhd", attention_weights, values).reshape(
             batch_size, sequence_length, embedding_dimension
         )  # [B, L, D]
 
@@ -359,43 +217,150 @@ class MaskedConvolution1D(nn.Module):
         return features.transpose(1, 2)  # [B, L, D]
 
 
+@dataclass
+class LocalCumulativeKernelDensitySequenceCompressionOutput:
+    tokens: Tensor
+    sink_mask: Tensor
+    sink_mass: Tensor
+    window_sink_indices: Tensor
+    window_mask: Tensor
+    reconstruction_bias: Tensor
+    spilled_mass: Tensor
+    budget_usage_fraction: Tensor
+    total_coordinate_span: Tensor
+    sink_allocation: Tensor
+    source_coordinates: Tensor
+    window_sink_coordinates: Tensor
+    sink_positions: Tensor
+
+    def overflow_loss(
+        self,
+        minimum_slack: float = 0.02,
+        maximum_overflow: float = 0.10,
+    ) -> Tensor:
+        """
+        Computes a loss term based on the spilled mass that encourages the model to keep the spilled mass within a reasonable range.
+        :param float minimum_spilled_mass: The minimum acceptable fraction of mass that can be overflowed.
+        :param float maximum_spilled_mass: The maximum acceptable fraction of mass that can be overflowed.
+        :return Tensor: A per batch loss term that penalizes spilled mass outside the specified range.
+        """
+        # Don't throw away information
+        upper = F.relu(self.spilled_mass - maximum_overflow)
+        # Don't over-fit to lattice
+        lower = F.relu(minimum_slack - self.spilled_mass)
+        return lower + upper  # L1 penalty [B]
+
+    def coordinate_budget_loss(
+        self,
+        sequence_mask: Tensor,
+        minimum_resolution: float = 0.15,
+        maximum_resolution: float = 0.35,
+    ) -> Tensor:
+        epsilon = torch.finfo(self.total_coordinate_span.dtype).eps
+        valid_length = sequence_mask.sum(dim=-1).to(self.total_coordinate_span.dtype)
+        actual_resolution = self.total_coordinate_span / valid_length.clamp_min(
+            epsilon
+        )  # [B]
+
+        lower = F.relu(minimum_resolution - actual_resolution)
+        upper = F.relu(actual_resolution - maximum_resolution)
+        # L2 hinge loss
+        return lower.square() + upper.square()  # [B]
+
+    def entropy_loss(self) -> Tensor:
+        epsilon = torch.finfo(self.tokens.dtype).eps
+        window_mass = self.sink_allocation.sum(dim=-1)  # [B, L]
+        window_mask = window_mass > epsilon
+
+        distribution = self.sink_allocation / window_mass.unsqueeze(-1).clamp_min(
+            epsilon
+        )
+        distribution = distribution.clamp_min(epsilon)
+
+        entropy = -(distribution * distribution.log()).sum(dim=-1)  # [B, L]
+        entropy = entropy * window_mask.to(entropy.dtype)
+
+        return entropy.sum(dim=-1) / window_mask.sum(dim=-1).clamp_min(1)
+
+    def spatial_dispersion_loss(self) -> Tensor:
+        epsilon = torch.finfo(self.tokens.dtype).eps
+        squared_distances = (
+            self.source_coordinates.unsqueeze(-1) - self.window_sink_coordinates
+        ).square()  # [B, L, W]
+
+        window_mass = self.sink_allocation.sum(dim=-1)  # [B, L]
+        window_mask = window_mass > epsilon
+
+        expected_distance = (self.sink_allocation * squared_distances).sum(
+            dim=-1
+        ) / window_mass.clamp_min(epsilon)
+
+        expected_distance = expected_distance * window_mask.to(expected_distance.dtype)
+        return expected_distance.sum(dim=-1) / window_mask.sum(dim=-1).clamp_min(1)
+
+    def sink_balance_loss(self) -> Tensor:
+        """
+        Encourages the mass to be more evenly distributed across active sinks to prevent degenerate solutions where one sink dominates.
+        """
+        epsilon = torch.finfo(self.sink_mass.dtype).eps
+        masked_mass = self.sink_mass * self.sink_mask.to(self.sink_mass.dtype)
+        total_mass = masked_mass.sum(dim=-1, keepdim=True).clamp_min(epsilon)
+        distribution = masked_mass / total_mass
+        return distribution.square().sum(dim=-1)
+
+    def auxiliary_loss(
+        self,
+        sequence_mask: Tensor,
+        overflow_weight: float = 0.5,
+        coordinate_budget_weight: float = 1.0,
+        entropy_weight: float = 0.0,
+        spatial_dispersion_weight: float = 0.002,
+        sink_balance_weight: float = 0.02,
+    ) -> Tensor:
+        return (
+            overflow_weight * self.overflow_loss()
+            + coordinate_budget_weight * self.coordinate_budget_loss(sequence_mask)
+            + entropy_weight * self.entropy_loss()
+            + spatial_dispersion_weight * self.spatial_dispersion_loss()
+            + sink_balance_weight * self.sink_balance_loss()
+        ).mean()
+
+
 class LocalCumulativeKernelDensitySequenceCompression(nn.Module):
     """ """
 
     def __init__(
         self,
         embedding_dimension: int,
-        resolution: float = 0.5,  # Number of slots per input token. For example, 0.5 means on average 1 slot for every 2 tokens.
-        local_slot_radius: int = 6,
+        resolution: float = 0.5,  # Number of sinks per input token. For example, 0.5 means on average 1 sink for every 2 tokens.
+        locality_radius: int = 6,
         positional_weight: float = 0.4,
-        assignment_sharpness: float = 4.0,  # Inverse temperature
         background_cost_payload: float = 2.0,
         minimum_budget_usage: float = 0.5,
-        reconstruction_sharpness: Optional[float] = None,
         hidden_dimension: Optional[int] = None,
         kernel_density_function: RadialBasisFunctions = RadialBasisFunctions.CAUCHY,
+        dropout: float = 0.1,
     ):
         super().__init__()
         assert 0.0 <= minimum_budget_usage <= 1.0, (
             "minimum_budget_usage must be between 0 and 1."
         )
         assert 0.0 <= positional_weight <= resolution <= 1.0, (
-            "positional_weight must be non-negative and less than resolution, and resolution must be at most 1 to ensure the model has a meaningful budget to assign to slots and that the coordinate mass grows with sequence length in a reasonable way."
+            "positional_weight must be non-negative and less than resolution, and resolution must be at most 1 to ensure the model has a meaningful budget to assign to sinks and that the coordinate mass grows with sequence length in a reasonable way."
         )
 
         self.embedding_dimension = embedding_dimension
         self.resolution = resolution
         self.positional_weight = positional_weight
         self.background_cost_payload = background_cost_payload
-        self.local_slot_radius = local_slot_radius
+        self.locality_radius = locality_radius
         self.minimum_budget_usage = minimum_budget_usage
-
+        self.dropout = dropout
         self.kernel_density_function = kernel_density_function
 
-        self.reconstruction_sharpness = reconstruction_sharpness or assignment_sharpness
         self.hidden_dimension = hidden_dimension or embedding_dimension
 
-        self.local_window = 2 * local_slot_radius + 1
+        self.window_size = 2 * locality_radius + 1
 
         self.frontend_convolution = MaskedConvolution1D(
             embedding_dimension=self.embedding_dimension,
@@ -403,357 +368,382 @@ class LocalCumulativeKernelDensitySequenceCompression(nn.Module):
             kernel_size=3,
         )
 
-        self.payload_feature_head = nn.Sequential(
+        self.feature_head = nn.Sequential(
             nn.RMSNorm(self.embedding_dimension),
             nn.Linear(self.embedding_dimension, self.hidden_dimension),
             nn.SiLU(),
-        )
-        self.density_head = nn.Linear(self.hidden_dimension, 1)
-        self.assignment_sharpness_head = nn.Linear(self.hidden_dimension, 1)
-
-        self.budget_head = nn.Sequential(
-            nn.RMSNorm(self.embedding_dimension),
-            nn.Linear(self.embedding_dimension, 1),
+            nn.Dropout(self.dropout),
         )
 
-        self.token_refining_feature_head = nn.Sequential(
+        self.refining_head = nn.Sequential(
             nn.RMSNorm(self.embedding_dimension + 2),
             nn.Linear(self.embedding_dimension + 2, self.hidden_dimension),
             nn.SiLU(),
+            nn.Dropout(self.dropout),
         )
 
-        self.slot_refiner = nn.Linear(self.hidden_dimension, self.embedding_dimension)
-        self.existence_gate = nn.Linear(self.hidden_dimension, 1)
+        self.source_potential_head = nn.Linear(self.hidden_dimension, 1)
+        self.coordinate_density_head = nn.Linear(self.hidden_dimension, 1)
+        self.budget_head = nn.Linear(self.hidden_dimension, 1)
+        self.assignment_sharpness_head = nn.Linear(self.hidden_dimension, 1)
+        self.source_emission_head = nn.Linear(self.hidden_dimension, 1)
 
-        self.decoder = WindowedSlotCrossAttentionDecoder(
+        self.affinity_head = nn.Linear(self.hidden_dimension + 1, 1)
+
+        self.sink_refinement_head = nn.Linear(
+            self.hidden_dimension, self.embedding_dimension
+        )
+        self.vitality_head = nn.Linear(self.hidden_dimension, 1)
+        self.reconstruction_sharpness_head = nn.Linear(self.hidden_dimension, 1)
+
+        self.decoder = WindowedSinkCrossAttentionDecoder(
             embedding_dimension=self.embedding_dimension,
             number_of_heads=8,
+            bias=False,
         )
 
     def forward(
         self, sequence: Tensor, sequence_mask: Tensor, payload_mask: Tensor
     ) -> LocalCumulativeKernelDensitySequenceCompressionOutput:
+        """
+        :param Tensor sequence: [B, L, D] input token features.
+        :param Tensor sequence_mask: [B, L] binary mask indicating valid token positions (1 for valid tokens, 0 for padding).
+        :param Tensor payload_mask: [B, L] binary mask indicating positions that can carry real content.
+        """
         batch_size, sequence_length, _ = sequence.shape
         device = sequence.device
-        dtype = sequence.dtype
 
-        negative_infinity = -1e4
+        # Use neighborhood to better able to identify local patterns and assign content to sinks based on local context
+        sequence = sequence + self.frontend_convolution(
+            sequence, payload_mask
+        )  # [B, L, D]
 
-        sequence_mask, payload_mask = sequence_mask.bool(), payload_mask.bool()
+        payload = sequence * payload_mask.unsqueeze(-1)  # [B, L, D]
+        payload_features = self.feature_head(payload)  # [B, L, H]
 
-        sequence = (
-            sequence + self.frontend_convolution(sequence, payload_mask)
-        ) * sequence_mask.unsqueeze(-1).to(dtype)  # [B, L, D]
+        dtype = payload_features.dtype
+        negative_infinity = torch.finfo(dtype).min // 8
+        epsilon = torch.finfo(dtype).eps
 
-        # Budgeting: Determine how many slots sequence should fill
-        valid_sequence_length = sequence_mask.sum(dim=-1)  # [B]
-        maximum_payload_budget = (
-            (valid_sequence_length * self.resolution)
-            - (valid_sequence_length * self.positional_weight)
+        # How much budget do we have for content after considering the baseline positional cost?
+        valid_sequence_lengths = sequence_mask.sum(dim=1)  # [B]
+        adaptive_capacity = (
+            (valid_sequence_lengths * self.resolution)
+            - (valid_sequence_lengths * self.positional_weight)
         ).clamp_min(0.0)  # [B]
 
-        # Mask input sequence with payload mask to get only the payload tokens
-        payload = sequence * payload_mask.unsqueeze(-1).to(dtype)  # [B, L, D]
-        payload_features = self.payload_feature_head(payload)  # [B, L, H]
-
-        # Compute density scores for each token in the payload
-        density_scores = (
-            self.density_head(payload_features)
+        # Controls local spatial scaling: higher scores stretch, lower scores compress.
+        coordinate_scores = (
+            self.coordinate_density_head(payload_features)
             .squeeze(-1)
             .masked_fill(~payload_mask, negative_infinity)
         )  # [B, L]
-        # Convert density scores to a distribution over the payload
-        density_distribution = F.softmax(density_scores, dim=-1) * payload_mask.to(
-            dtype
-        )  # [B, L]
-        density_distribution = density_distribution / density_distribution.sum(
-            dim=-1, keepdim=True
-        ).clamp_min(1e-8)  # [B, L]
+        # How much of the coordinate budget should be assigned to each token based on its features.
+        spatial_priority = F.softmax(coordinate_scores, dim=-1)  # [B, L]
 
-        pooled_sequence = sequence.sum(dim=1) / sequence_mask.sum(
+        # How much content is there per token on average?
+        summary = payload_features.sum(dim=1) / payload_mask.sum(
             dim=1, keepdim=True
-        ).to(dtype).clamp_min(1.0)
+        ).clamp_min(1.0)  # [B, H]
 
+        # How much of the available budget do we actually use?
         budget_usage_fraction = self.minimum_budget_usage + (
             1 - self.minimum_budget_usage
-        ) * torch.sigmoid(self.budget_head(pooled_sequence)).squeeze(-1)  # [B]
+        ) * torch.sigmoid(self.budget_head(summary)).squeeze(-1)  # [B]
 
-        adaptive_payload_budget = maximum_payload_budget * budget_usage_fraction  # [B]
-        payload_density = density_distribution * adaptive_payload_budget.unsqueeze(
+        # Total adaptive coordinate budget available beyond the baseline positional mass.
+        adaptive_coordinate_budget = adaptive_capacity * budget_usage_fraction  # [B]
+
+        # The per-token allocation of the coordinate budget
+        # Controls how much each token contributes to the coordinates of the sinks.
+        adaptive_coordinates = spatial_priority * adaptive_coordinate_budget.unsqueeze(
             -1
         )  # [B, L]
 
-        # # Coordinate rate includes a small floor for every real sequence position.
-        coordinate_rate = (
-            self.positional_weight * sequence_mask.to(dtype)
-        ) + payload_density  # [B, L]
-        #
-        # coordinate_rate = self.positional_weight * sequence_mask.to(dtype)
+        # Combines the baseline positional cost and the adaptive coordinate allocation.
+        # Density of sinks at a position is the sum of a fixed positional bias and the adaptive allocation.
+        lattice_density = (
+            self.positional_weight * sequence_mask.to(adaptive_coordinates.dtype)
+        ) + adaptive_coordinates  # [B, L]
 
-        # Center coordinate of each token's cumulative interval.
-        # cumulative_position is in the range [0, L], where L is the sequence length.
-        cumulative_position = torch.cumsum(coordinate_rate, dim=1) - (
-            coordinate_rate / 2
+        # Center of each token coordinate interval
+        source_coordinates = torch.cumsum(lattice_density, dim=1) - (
+            lattice_density / 2
         )  # [B, L]
 
-        total_coordinate_mass = coordinate_rate.sum(dim=1, keepdim=True)  # [B, 1]
+        # How much total coordinate mass do we have across the sequence?
+        # This controls how many sinks we can fill and is used to normalize the token coordinates to a [0, 1] range.
+        total_coordinate_span = lattice_density.sum(dim=1, keepdim=True)  # [B, 1]
 
-        #  Build batch-shaped slot centers and active slot mask.
-        maximum_slot_count = max(
-            1, int(sequence_length * self.resolution + 0.99999)
-        )  # Round up to ensure at least one slot
+        # Make sure at least one sink is always available and that the number of sinks grows.
+        lattice_size = max(1, math.ceil(sequence_length * self.resolution))
 
-        slot_centers = (
-            torch.arange(maximum_slot_count, device=device, dtype=dtype).unsqueeze(0)
+        # Lattice of sink centers based on the maximum number of sinks.
+        sink_coordinates = (
+            torch.arange(
+                lattice_size, device=device, dtype=adaptive_coordinates.dtype
+            ).unsqueeze(0)
             + 0.5
         ).expand(batch_size, -1)  # [B, T]
 
-        # Slot is active if its center falls inside the sequence's cumulative mass.
-        slot_mask = slot_centers < total_coordinate_mass  # [B, T]
+        # Masks to prune unused sink if the total coordinate mass is small.
+        sink_mask = sink_coordinates < total_coordinate_span  # [B, T]
+        # Ensure at least the first sink is always active if the sequence is not empty.
+        sink_mask[:, :1] = sink_mask[:, :1] | sequence_mask.any(dim=1, keepdim=True)
 
-        # Ensure at least one slot is active if there's any token in the sequence
-        slot_mask[:, :1] = slot_mask[:, :1] | (sequence_mask.any(dim=1, keepdim=True))
-
-        # Build local windows of slots
-        offsets = (
-            torch.arange(
-                -self.local_slot_radius,
-                self.local_slot_radius + 1,
-                device=device,
-                dtype=torch.long,
-            )
-            .unsqueeze(0)
-            .unsqueeze(0)
-        )  # [1, 1, W]
+        # Define the offsets of the local window around each sink center.
+        window_offsets = torch.arange(
+            -self.locality_radius,
+            self.locality_radius + 1,
+            device=device,
+            dtype=torch.long,
+        ).reshape(1, 1, -1)
 
         # Window selection is discrete; gradients still flow through cumulative_position
-        # in the distance-based assignment scores inside the selected window.
-        nearest_slot_indices = torch.round(cumulative_position - 0.5).long()  # [B, L]
-
-        # Add local offsets to nearest slot indices to get the indices of slots in each token's local window.
-        window_slot_indices = nearest_slot_indices.unsqueeze(-1) + offsets  # [B, L, W]
-
-        # those that fall within the range of available slots are valid, others will be masked out
-        valid_window_mask = (window_slot_indices >= 0) & (
-            window_slot_indices < maximum_slot_count
+        # Indices of the tokens that fall into the local window around each sink center.
+        window_sink_indices = (
+            torch.round(source_coordinates - 0.5).long().unsqueeze(-1) + window_offsets
         )  # [B, L, W]
 
-        # Clamp window slot indices to be within the valid range of slot indices for gathering slot centers and masks.
-        window_slot_indices = window_slot_indices.clamp(
-            0, maximum_slot_count - 1
+        # Mask to indicate which tokens are in the local window of each sink.
+        within_bounds_mask = (window_sink_indices >= 0) & (
+            window_sink_indices < lattice_size
         )  # [B, L, W]
 
-        # Gather the slot masks for the slots in each token's local window. This will be used to mask out invalid slots in the local window.
-        batch_indices = torch.arange(batch_size, device=device).reshape(
+        # Clamp the indices to ensure they are within the valid range of sinks.
+        window_sink_indices = window_sink_indices.clamp(
+            0, lattice_size - 1
+        )  # [B, L, W]
+
+        # Batch offsets for indexing into the flattened sink token tensor.
+        batch_indices = torch.arange(batch_size, device=device).view(
             batch_size, 1, 1
-        )
-        window_slot_mask = slot_mask[batch_indices, window_slot_indices]  # [B, L, W]
+        )  # [B, 1, 1]
 
-        # Mask out invalid slots in the local window
-        window_slot_mask = window_slot_mask & valid_window_mask  # [B, L, W]
-
-        # Gather the centers of the slots in each token's local window. This will be used to compute distances from the token to the slots in its local window.
-        window_slot_centers = slot_centers[batch_indices, window_slot_indices]
-
-        # Distance from each payload token to the centers of its local window of slots.
-        positional_distances = (
-            cumulative_position.unsqueeze(-1) - window_slot_centers
+        # Mask to indicate which tokens can contribute to which sinks based on the local window and the validity of the sinks.
+        window_mask = (
+            sink_mask[batch_indices, window_sink_indices] & within_bounds_mask
         )  # [B, L, W]
 
-        # Compute assignment scores using the kernel density function
-        assignment_scores = self.kernel_density_function(
-            positional_distances,
-            F.softplus(self.assignment_sharpness_head(payload_features)) + 1e-4,
+        # Gather the centers of the sinks in each token's local window.
+        window_sink_coordinates = sink_coordinates[
+            batch_indices, window_sink_indices
+        ]  # [B, L, W]
+
+        coordinate_drift = (
+            source_coordinates.unsqueeze(-1) - window_sink_coordinates
         )  # [B, L, W]
 
-        # Masked assignment scores for invalid slots in the local window
-        assignment_scores = assignment_scores.masked_fill(
-            ~(window_slot_mask & payload_mask.unsqueeze(-1)), negative_infinity
+        # How well do the features of the tokens in the payload match with the sinks in their local window?
+        affinity_scores = self.kernel_density_function(
+            coordinate_drift,
+            F.softplus(self.assignment_sharpness_head(payload_features)) + epsilon,
+        ).masked_fill(
+            ~(window_mask & payload_mask.unsqueeze(-1)), negative_infinity
         )  # [B, L, W]
 
-        # Background is an extra write target. It absorbs payload mass that should not be represented by any slot
-        background_scores = torch.full(
+        # Background is an extra write target. It absorbs payload mass that should not be represented by any sink
+        # Non payload tokens are going to go to background by default.
+        overflow_scores = torch.full(
             (batch_size, sequence_length, 1),
             -self.background_cost_payload,
             device=device,
-            dtype=dtype,
-        )  # [B, L, 1]
+            dtype=affinity_scores.dtype,
+        ).masked_fill(~payload_mask.unsqueeze(-1), 0.0)  # [B, L, 1]
 
-        # Non-payload tokens are entirely background
-        background_scores = background_scores.masked_fill(
-            ~payload_mask.unsqueeze(-1), 0.0
-        )  # [B, L, 1]
+        content_scores = (
+            self.affinity_head(
+                torch.cat(
+                    [
+                        payload_features.unsqueeze(-2).expand(
+                            -1, -1, self.window_size, -1
+                        ),  # [B, L, W, H]
+                        coordinate_drift.unsqueeze(-1),  # [B, L, W, 1]
+                    ],
+                    dim=-1,
+                )  # [B, L, W, H + 1])
+            )
+            .squeeze(-1)
+            .masked_fill(~(window_mask & payload_mask.unsqueeze(-1)), negative_infinity)
+        )  # [B, L, W]
 
-        # Combine slot assignment scores with background scores
+        # Make a distribution for combined assignment to sinks and background
         transport_plan = F.softmax(
-            torch.cat([assignment_scores, background_scores], dim=-1), dim=-1
-        )  # [B, L, W+1]
+            torch.cat([affinity_scores + content_scores, overflow_scores], dim=-1),
+            dim=-1,
+        )  # [B, L, W + 1]
 
-        assignment_plan = transport_plan[..., :-1]  # [B, L, W]
-        background_plan = transport_plan[..., -1]  # [B, L]
+        sink_allocation = transport_plan[..., :-1]  # [B, L, W]
+        overflow_allocation = transport_plan[..., -1]  # [B, L]
 
-        # Source mass is determined by payload density, which is the "mass" that needs
-        # to be transported from tokens to slots. Non-payload tokens have zero mass and thus do not contribute to any slot.
-        # Of the payload being represented, what fraction comes from each token?
-        source_mass = payload_density / payload_density.sum(dim=1, keepdim=True).clamp(
-            min=1e-8
-        )  # [B, L]
+        # How much mass is there to write in sinks based on the features of the payload tokens?
+        source_potential = (
+            self.source_potential_head(payload_features).squeeze(-1)
+        ).masked_fill(~payload_mask, negative_infinity)  # [B, L]
 
-        # # Mask source mass to ensure non-payload tokens have zero mass
-        source_mass = source_mass * payload_mask.to(dtype)  # [B, L]
-        # source_mass = density_distribution * payload_mask.to(dtype)
-        # source_mass = source_mass / source_mass.sum(dim=1, keepdim=True).clamp_min(1e-8)
+        # Representing the proportion of the payload budget that should be assigned to each token.
+        source_mass = F.softmax(source_potential, dim=-1)  # [B, L]
 
-        # Compute the mass for slots
-        assignment_mass = assignment_plan * source_mass.unsqueeze(-1)  # [B, L, W]
-        background_mass = (background_plan * source_mass).sum(dim=-1)  # [B]
+        # mass that is going to sinks vs overflow
+        flowing_mass = sink_allocation * source_mass.unsqueeze(-1)  # [B, L, W]
+        spilled_mass = (overflow_allocation * source_mass).sum(dim=-1)  # [B]
 
-        flattened_window_slot_indices = window_slot_indices.reshape(
-            batch_size, sequence_length * self.local_window
+        flattened_window_indices = window_sink_indices.reshape(
+            batch_size, sequence_length * self.window_size
         )  # [B, L*W]
 
-        flattened_assignment_mass = assignment_mass.reshape(
-            batch_size, sequence_length * self.local_window
+        flattened_flowing_mass = flowing_mass.reshape(
+            batch_size, sequence_length * self.window_size
         )  # [B, L*W]
 
-        # How much of the normalized payload transport landed in each slot?
-        slot_mass = torch.zeros(
-            batch_size, maximum_slot_count, device=device, dtype=dtype
+        # Accumulate the mass assigned to each sink from the tokens in its local window.
+        sink_mass = torch.zeros(
+            batch_size, lattice_size, device=device, dtype=flattened_flowing_mass.dtype
         ).scatter_add_(
-            1, flattened_window_slot_indices, flattened_assignment_mass
+            dim=1, index=flattened_window_indices, src=flattened_flowing_mass
         )  # [B, T]
 
-        slot_contributions = torch.einsum(
-            "blw, bld -> blwd", assignment_mass, sequence
-        ).reshape(
+        # # Compute the flux (mass * features) from each source token to its assigned sinks.
+        # This is the content that will be aggregated into the sinks.
+        flowing_flux = torch.einsum("blw, bld -> blwd", flowing_mass, sequence).reshape(
             batch_size,
-            sequence_length * self.local_window,
+            sequence_length * self.window_size,
             self.embedding_dimension,
         )  # [B, L*W, D]
 
-        slot_payload = torch.zeros(
+        # Aggregate the transported flux into each sink.
+        sink_accumulation = torch.zeros(
             batch_size,
-            maximum_slot_count,
+            lattice_size,
             self.embedding_dimension,
             device=device,
-            dtype=dtype,
+            dtype=flowing_flux.dtype,
         ).scatter_add_(
-            1,
-            flattened_window_slot_indices.unsqueeze(-1).expand(
+            dim=1,
+            index=flattened_window_indices.unsqueeze(-1).expand(
                 batch_size,
-                sequence_length * self.local_window,
+                sequence_length * self.window_size,
                 self.embedding_dimension,
             ),
-            slot_contributions.to(dtype),
+            src=flowing_flux,
         )  # [B, T, D]
 
-        # Normalize slot payload by slot mass to get the final slot representations. Add a small epsilon to the denominator for numerical stability.
-        tokens = slot_payload / slot_mass.unsqueeze(-1).clamp_min(1e-6)  # [B, T, D]
+        # The latent representations (centroids) derived from the accumulated mass.
+        tokens = sink_accumulation / sink_mass.unsqueeze(-1).clamp_min(
+            epsilon
+        )  # [B, T, D]
 
-        # Refine slot representations with residuals\
-        slot_refiner_features = torch.cat(
+        sink_descriptors = torch.cat(
             [
                 tokens,
-                slot_mass.unsqueeze(-1),
-                torch.log(slot_mass.unsqueeze(-1).clamp_min(1e-6)),
+                sink_mass.unsqueeze(-1),
+                sink_mass.unsqueeze(-1).clamp_min(epsilon).log(),
             ],
             dim=-1,
-        ) * slot_mask.unsqueeze(-1)  # [B, T, D+2]
+        ) * sink_mask.unsqueeze(-1)  # [B, T, D + 2]
 
-        token_refined_features = self.token_refining_feature_head(
-            slot_refiner_features
-        ) * slot_mask.unsqueeze(-1)  # [B, T, H]
-
-        tokens = tokens + self.slot_refiner(token_refined_features)  # [B, T, D]
-        # Mask out slots that are not active
-        tokens = tokens * slot_mask.unsqueeze(-1).to(dtype)  # [B, T, D]
-
-        # Soft existence gate to allow the model to learn to ignore certain slots if it wants to
-        existence_scores = self.existence_gate(token_refined_features).squeeze(
+        # Project descriptors into a refinement space
+        sink_features = self.refining_head(sink_descriptors) * sink_mask.unsqueeze(
             -1
+        )  # [B, T, H]
+
+        # Refine the latent tokens using the learned residuals.
+        tokens = tokens + self.sink_refinement_head(sink_features)  # [B, T, D]
+        tokens = tokens * sink_mask.unsqueeze(-1)  # [B, T, D]
+
+        sink_vitality_scores = F.logsigmoid(
+            self.vitality_head(sink_features).squeeze(-1)
         )  # [B, T]
-        log_existence_scores = F.logsigmoid(existence_scores)  # [B, T]
 
-        attention_bias = log_existence_scores.masked_fill(
-            ~slot_mask, negative_infinity
+        attention_bias = sink_vitality_scores.masked_fill(
+            ~sink_mask, negative_infinity
         )  # [B, T]
 
-        # Add local occupancy bias so dead slots get less reconstruction mass.
-        window_log_occupancy = attention_bias[batch_indices, window_slot_indices]
+        window_occupancy_bias = attention_bias[
+            batch_indices, window_sink_indices
+        ]  # [B, L, W]
 
-        # Reconstruction
-        reconstruction_scores = self.kernel_density_function(
-            positional_distances, self.reconstruction_sharpness
+        sink_reconstruction_sharpness = (
+            F.softplus(self.reconstruction_sharpness_head(sink_features)) + epsilon
+        )  # [B, T, 1]
+
+        window_sharpness = sink_reconstruction_sharpness[
+            batch_indices, window_sink_indices
+        ].squeeze(-1)  # [B, L, W]
+
+        reconstruction_affinity = self.kernel_density_function(
+            coordinate_drift,
+            window_sharpness,
         )  # [B, L, W]
 
-        reconstruction_scores = (
-            reconstruction_scores + window_log_occupancy
-        )  # [B, L, W]
+        reconstruction_bias = (
+            window_occupancy_bias + reconstruction_affinity
+        ).masked_fill(~(window_mask & sequence_mask.unsqueeze(-1)), negative_infinity)
 
-        # All sequence including non-payload tokens can attend to slots for reconstruction
-        reconstruction_scores = reconstruction_scores.masked_fill(
-            ~(window_slot_mask & sequence_mask.unsqueeze(-1)), negative_infinity
-        )
+        # For positional embeddings for later transformer model we expose where sinks are in sequence
+        weighted_source_contributions = (
+            flowing_mass * source_coordinates.unsqueeze(-1)
+        ).reshape(batch_size, sequence_length * self.window_size)
+
+        sink_positions = torch.zeros(
+            batch_size,
+            lattice_size,
+            device=device,
+            dtype=weighted_source_contributions.dtype,
+        ).scatter_add_(
+            dim=1,
+            index=flattened_window_indices,
+            src=weighted_source_contributions,
+        ) / sink_mass.clamp_min(epsilon)  # [B, T]
 
         return LocalCumulativeKernelDensitySequenceCompressionOutput(
             tokens=tokens,  # [B, T, D]
-            attention_bias=attention_bias,  # [B, T]
-            slot_mask=slot_mask,  # [B, T]
-            slot_mass=slot_mass,  # [B, T]
-            background_mass=background_mass,  # [B]
-            assignment_plan=assignment_plan,  # [B, L, W]
-            window_slot_indices=window_slot_indices,  # [B, L, W]
-            payload_density=payload_density,  # [B, L]
-            coordinate_rate=coordinate_rate,  # [B, L]
-            total_coordinate_mass=total_coordinate_mass.squeeze(-1),  # [B]
-            slot_centers=slot_centers,  # [B, T]
+            sink_mask=sink_mask,  # [B, T]
+            sink_mass=sink_mass,  # [B, T]
+            window_sink_indices=window_sink_indices,  # [B, L, W]
+            window_mask=window_mask,  # [B, L, W]
+            reconstruction_bias=reconstruction_bias,  # [B, L, W]
+            spilled_mass=spilled_mass,  # [B]
             budget_usage_fraction=budget_usage_fraction,  # [B]
-            adaptive_payload_budget=adaptive_payload_budget,  # [B]
-            cumulative_position=cumulative_position,  # [B, L]
-            window_slot_mask=window_slot_mask,  # [B, L, W]
-            reconstruction_scores=reconstruction_scores,  # [B, L, W]
+            total_coordinate_span=total_coordinate_span.squeeze(-1),  # [B]
+            sink_allocation=sink_allocation,  # [B, L, W]
+            source_coordinates=source_coordinates,  # [B, L]
+            window_sink_coordinates=window_sink_coordinates,  # [B, L, W]
+            sink_positions=sink_positions,  # [B, T]
         )
 
     def reconstruct(
         self,
-        tokens: Tensor,
+        transformed_tokens: Tensor,
         sequence: Tensor,
-        window_slot_indices: Tensor,
-        window_slot_mask: Tensor,
-        positional_bias: Optional[Tensor] = None,
+        window_sink_indices: Tensor,
+        window_mask: Tensor,
+        reconstruction_bias: Tensor,
     ) -> Tensor:
-        """
-        Reconstruct the original sequence from the compressed slot representations using the reconstruction plan, with dynamic realignment.
-
-        :param Tensor tokens: [B, T, D] The compressed slot representations.
-        :param Tensor reconstruction_plan: [B, L, W] The plan for how to reconstruct each token from the slots in its local window.
-        :param Tensor window_slot_indices: [B, L, W] The indices of the slots in each token's local window.
-        :param Tensor sequence: [B, L, D] The original input sequence, used for dynamic realignment.
-        :param Tensor sequence_mask: [B, L] Mask indicating valid positions in the sequence.
-        :return Tensor: [B, L, D] The reconstructed sequence.
-        """
+        if self.training:
+            dropout_mask = (
+                torch.rand(reconstruction_bias.shape, device=reconstruction_bias.device)
+                < self.dropout
+            ) & window_mask
+            reconstruction_bias = reconstruction_bias.masked_fill(
+                dropout_mask, torch.finfo(reconstruction_bias.dtype).min // 8
+            )
         return self.decoder(
             sequence_queries=sequence,
-            latent_slot_tokens=tokens,
-            window_slot_indices=window_slot_indices,
-            window_slot_mask=window_slot_mask,
-            reconstruction_bias=positional_bias,
+            latent_tokens=transformed_tokens,
+            window_sink_indices=window_sink_indices,
+            window_mask=window_mask,
+            reconstruction_bias=reconstruction_bias,
         )
 
-    def pooling(self, tokens: Tensor, slot_mass: Tensor, slot_mask: Tensor) -> Tensor:
-        """
-        Pool the compressed slot representations into a single vector representation for the whole sequence.
+    def pooling(self, tokens: Tensor, sink_mass: Tensor, sink_mask: Tensor) -> Tensor:
+        dtype = tokens.dtype
+        epsilon = torch.finfo(dtype).eps
+        masked_tokens = tokens * sink_mask.unsqueeze(-1).to(dtype)  # [B, T, D]
+        masked_mass = sink_mass * sink_mask.to(dtype)  # [B, T]
 
-        :param Tensor tokens: [B, T, D] The compressed slot representations.
-        :param Tensor slot_mass: [B, T] The mass assigned to each slot, which can be used as weights for pooling.
-        :param Tensor slot_mask: [B, T] A boolean mask indicating which slots are active and should be included in the pooling.
-        :return Tensor: [B, D] The pooled representation of the sequence.
-        """
-        masked_tokens = tokens * slot_mask.unsqueeze(-1).to(tokens.dtype)  # [B, T, D]
-        masked_mass = slot_mass * slot_mask.to(slot_mass.dtype)  # [B, T]
-
-        pooled = (masked_tokens * masked_mass.unsqueeze(-1)).sum(
-            dim=1
-        ) / masked_mass.sum(dim=1).unsqueeze(-1).clamp_min(1e-6)  # [B, D]
+        pooled = (masked_tokens * masked_mass.unsqueeze(-1)).sum(dim=1) / (
+            masked_mass.sum(dim=1, keepdim=True).clamp_min(epsilon)
+        )  # [B, D]
 
         return pooled
