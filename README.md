@@ -56,3 +56,7 @@ Class weights are calculated to address class imbalance in the dataset. The weig
 $$
 \text{weight}_i = \frac{N}{C \cdot n_i}
 $$
+
+## ⚖️ License
+Copyright (c) 2026 Joel Jacob.
+This project is licensed under the Apache License 2.0. You may use, modify, and distribute this software in accordance with the license. See the [LICENSE](LICENSE) file for details.
