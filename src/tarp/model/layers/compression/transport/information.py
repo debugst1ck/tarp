@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 
 
-class RadialBasisFunctions(Enum):
+class RadialBasisFunction(Enum):
     """
     Common radial basis functions for computing assignment scores based on distances between tokens and sink centers.
     The choice of function and its sharpness parameter can affect how mass is assigned to sinks based on distance,
@@ -31,21 +31,21 @@ class RadialBasisFunctions(Enum):
         """
         epsilon = torch.finfo(distances.dtype).eps
         match self:
-            case RadialBasisFunctions.CAUCHY:
+            case RadialBasisFunction.CAUCHY:
                 return -torch.log1p(sharpness * distances.square())
-            case RadialBasisFunctions.GAUSSIAN:
+            case RadialBasisFunction.GAUSSIAN:
                 return -sharpness * distances.square()
-            case RadialBasisFunctions.LAPLACE:
+            case RadialBasisFunction.LAPLACE:
                 return -sharpness * distances.abs()
-            case RadialBasisFunctions.EPANECHNIKOV:
+            case RadialBasisFunction.EPANECHNIKOV:
                 return torch.clamp(
                     1 - sharpness * distances.square(), min=epsilon
                 ).log()
-            case RadialBasisFunctions.RATIONAL_POWER:
+            case RadialBasisFunction.RATIONAL_POWER:
                 return -sharpness * torch.log1p(distances.abs())
-            case RadialBasisFunctions.INVERSE_MULTIQUADRIC:
+            case RadialBasisFunction.INVERSE_MULTIQUADRIC:
                 return -0.5 * torch.log1p(sharpness * distances.square())
-            case RadialBasisFunctions.TRIWEIGHT:
+            case RadialBasisFunction.TRIWEIGHT:
                 return (
                     3
                     * (
@@ -131,7 +131,7 @@ class WindowedSinkCrossAttentionDecoder(nn.Module):
         )  # [B, L, H, W]
 
         epsilon = torch.finfo(scores.dtype).eps
-        negative_infinity = torch.finfo(scores.dtype).min // 8
+        negative_infinity = torch.finfo(scores.dtype).min
 
         if reconstruction_bias is not None:
             scores = scores + reconstruction_bias.unsqueeze(2)  # [B, L, H, W]
@@ -236,7 +236,7 @@ class LocalCumulativeKernelDensitySequenceCompressionOutput:
     def overflow_loss(
         self,
         minimum_slack: float = 0.02,
-        maximum_overflow: float = 0.10,
+        maximum_overflow: float = 0.20,
     ) -> Tensor:
         """
         Computes a loss term based on the spilled mass that encourages the model to keep the spilled mass within a reasonable range.
@@ -311,11 +311,11 @@ class LocalCumulativeKernelDensitySequenceCompressionOutput:
     def auxiliary_loss(
         self,
         sequence_mask: Tensor,
-        overflow_weight: float = 0.5,
-        coordinate_budget_weight: float = 1.0,
+        overflow_weight: float = 0.01,
+        coordinate_budget_weight: float = 0.1,
         entropy_weight: float = 0.0,
-        spatial_dispersion_weight: float = 0.002,
-        sink_balance_weight: float = 0.02,
+        spatial_dispersion_weight: float = 0.0,
+        sink_balance_weight: float = 0.005,
     ) -> Tensor:
         return (
             overflow_weight * self.overflow_loss()
@@ -338,7 +338,7 @@ class LocalCumulativeKernelDensitySequenceCompression(nn.Module):
         background_cost_payload: float = 2.0,
         minimum_budget_usage: float = 0.5,
         hidden_dimension: Optional[int] = None,
-        kernel_density_function: RadialBasisFunctions = RadialBasisFunctions.CAUCHY,
+        kernel_density_function: RadialBasisFunction = RadialBasisFunction.CAUCHY,
         dropout: float = 0.1,
     ):
         super().__init__()
@@ -386,7 +386,6 @@ class LocalCumulativeKernelDensitySequenceCompression(nn.Module):
         self.coordinate_density_head = nn.Linear(self.hidden_dimension, 1)
         self.budget_head = nn.Linear(self.hidden_dimension, 1)
         self.assignment_sharpness_head = nn.Linear(self.hidden_dimension, 1)
-        self.source_emission_head = nn.Linear(self.hidden_dimension, 1)
 
         self.affinity_head = nn.Linear(self.hidden_dimension + 1, 1)
 
@@ -422,7 +421,7 @@ class LocalCumulativeKernelDensitySequenceCompression(nn.Module):
         payload_features = self.feature_head(payload)  # [B, L, H]
 
         dtype = payload_features.dtype
-        negative_infinity = torch.finfo(dtype).min // 8
+        negative_infinity = torch.finfo(dtype).min
         epsilon = torch.finfo(dtype).eps
 
         # How much budget do we have for content after considering the baseline positional cost?
@@ -726,7 +725,7 @@ class LocalCumulativeKernelDensitySequenceCompression(nn.Module):
                 < self.dropout
             ) & window_mask
             reconstruction_bias = reconstruction_bias.masked_fill(
-                dropout_mask, torch.finfo(reconstruction_bias.dtype).min // 8
+                dropout_mask, torch.finfo(reconstruction_bias.dtype).min
             )
         return self.decoder(
             sequence_queries=sequence,
