@@ -1,5 +1,3 @@
-from typing import Optional
-
 import scipy.fft
 import torch.fft
 import torch.nn.functional as F
@@ -16,7 +14,7 @@ def next_power_of_two(n: int) -> int:
 def fft_cross_correlation_nd(
     input: Tensor,
     filter: Tensor,
-    bias: Optional[Tensor] = None,
+    bias: Tensor | None = None,
     stride: tuple[int, ...] = (1,),
     padding: tuple[int, ...] = (0,),
     dilation: tuple[int, ...] = (1,),
@@ -39,7 +37,7 @@ def fft_cross_correlation_nd(
 
     # Get the number of spatial dimensions
     dimensions = input.dim() - 2  # Exclude batch and channel dimensions
-    batch_size, in_channel = input.shape[:2]
+    batch_size, _ = input.shape[:2]
     out_channels, filter_in_channel, *kernel_sizes = filter.shape
     signal_sizes = input.shape[2:]
 
@@ -91,16 +89,22 @@ def fft_cross_correlation_nd(
 
     # Determine the size for FFT per dimension, use next fast length for normal efficiency
     # But cuFFT in half precision only supports powers of 2, so we use that for GPU tensors with float16 or bfloat16 dtype
-    fft_sizes: tuple[int, ...] = tuple(
+    fft_sizes = tuple(
         [
-            next_power_of_two(
-                padded_input.size(dimension + 3) + kernel_sizes[dimension] - 1
+            next_power_of_two(target_len)
+            if (
+                fast_len := scipy.fft.next_fast_len(
+                    target_len := padded_input.size(dimension + 3)
+                    + kernel_sizes[dimension]
+                    - 1
+                )
             )
-            if padded_input.is_cuda
-            and padded_input.dtype in (torch.float16, torch.bfloat16)
-            else scipy.fft.next_fast_len(
-                padded_input.size(dimension + 3) + kernel_sizes[dimension] - 1
-            )  # type: ignore
+            is None
+            or (
+                padded_input.dtype in (torch.float16, torch.bfloat16)
+                and padded_input.is_cuda
+            )
+            else fast_len
             for dimension in range(dimensions)
         ]
     )
@@ -165,7 +169,7 @@ def fft_cross_correlation_nd(
 def fft_cross_correlation_1d(
     input: Tensor,
     filter: Tensor,
-    bias: Optional[Tensor] = None,
+    bias: Tensor | None = None,
     stride: int = 1,
     padding: int = 0,
     dilation: int = 1,
@@ -200,7 +204,7 @@ def fft_cross_correlation_1d(
 def fft_cross_correlation_2d(
     input: Tensor,
     filter: Tensor,
-    bias: Optional[Tensor] = None,
+    bias: Tensor | None = None,
     stride: tuple[int, int] = (1, 1),
     padding: tuple[int, int] = (0, 0),
     dilation: tuple[int, int] = (1, 1),

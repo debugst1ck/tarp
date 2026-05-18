@@ -1,63 +1,41 @@
-from typing import Optional
+from abc import ABC, abstractmethod
+from typing import override
 
 import torch
 from torch import Tensor
 
-from tarp.model.layers.positional import TransformativeRelativePositionalEncoder
+from tarp.model.layers.positional.core import (
+    TransformativePositionalEncoding,
+)
 
 
-class RotaryPositionalEmbedding(TransformativeRelativePositionalEncoder):
-    """
-    Rotary Positional Embedding module.
-
-    Reference: "RoFormer: Enhanced Transformer with Rotary Position Embedding
-    (https://arxiv.org/abs/2104.09864)
-    """
-
+class RotaryPositionalEncoding(TransformativePositionalEncoding, ABC):
     def __init__(
         self,
-        head_dimension: int,
+        dimension: int,
         rotational_fraction: float = 1.0,
-        maximum_sequence_length: int = 1024,
         base: int = 10000,
+        dtype: torch.dtype = torch.float32,
     ):
-        """
-        :param head_dimension: Dimension of the attention heads (embedding_dimension / number_of_heads)
-        :param maximum_sequence_length: Maximum sequence length to precompute the embeddings for
-        :param base: Base for the frequency calculation
-        """
         super().__init__()
-        self.dimension = head_dimension
-        self.maximum_sequence_length = maximum_sequence_length
-        self.base = base
+
+        self.dimension = dimension  # [D]
         self.rotational_fraction = rotational_fraction
+        self.base = base
+        self.rotary_dimension = int(dimension * rotational_fraction)  # [R]
 
-        self.rotary_dimension = int(self.dimension * self.rotational_fraction)
+        # The dtype for core calculations
+        self.dtype = dtype
 
-        assert self.dimension % 2 == 0, "Head dimension must be even."
-        assert self.rotary_dimension % 2 == 0, "Rotary dimension must be even."
-
-        # Declare buffers for precomputed values
         self.inverse_frequencies: Tensor
-        # Register buffers
         self.register_buffer(
             "inverse_frequencies",
-            torch.zeros(self.rotary_dimension // 2),
+            torch.empty(self.rotary_dimension // 2),
             persistent=False,
         )
-
-        # Cache for complex frequencies (cosine + sine) of shape (1, 1, maximum_sequence_length, rotary_dimension/2)
-        # Stored as an attribute instead of a buffer since it will be recomputed on demand
-        # And recomputation is based on input sequence length, which may vary
-        # And could break DDP if stored as a buffer and moved across devices
-        # We will ensure that the cache is always on the correct device when we compute it
-        self.complex_frequencies_cache = torch.empty(0)
-
         self.reset_parameters()
 
-    def reset_parameters(self):
-        target_device = self.inverse_frequencies.device
-        # Recompute 1 / base^(2i/d)
+    def reset_parameters(self) -> None:
         inverse_frequencies = 1.0 / (
             self.base
             ** (
@@ -65,193 +43,132 @@ class RotaryPositionalEmbedding(TransformativeRelativePositionalEncoder):
                     0,
                     self.rotary_dimension,
                     2,
-                    dtype=torch.float,
-                    device=target_device,
+                    dtype=self.dtype,
                 )
                 / self.rotary_dimension
             )
-        )
+        )  # [R/2]
 
         with torch.no_grad():
-            # Object of type "Tensor" is not callable
-            self.inverse_frequencies.copy_(inverse_frequencies)
+            _ = self.inverse_frequencies.copy_(inverse_frequencies)
 
-    def _compute_trigonometric_caches(self, sequence_length: int, device: torch.device):
-        positions: Tensor = torch.arange(
-            sequence_length, dtype=torch.float, device=device
-        )  # (sequence_length,)
-
-        angle_rates = torch.einsum(
-            "i,j->ij", positions, self.inverse_frequencies.to(device)
-        )
-
-        # Compute complex exponentials
-        complex_frequencies = (
-            torch.polar(torch.ones_like(angle_rates), angle_rates)
-            .unsqueeze(0)
-            .unsqueeze(0)
-        )  # (1, 1, sequence_length, rotary_dimension/2)
-
-        self.complex_frequencies_cache = complex_frequencies
-
-    def _ensure_cache_availability(
-        self, maximum_position_index: int, device: torch.device
-    ):
-        """
-        Ensure that the cosine and sine caches are computed for the required maximum position index.
-
-        :param maximum_position_index: The maximum position index that needs to be supported
-        :return: None
-        """
-        if (
-            self.complex_frequencies_cache.numel() == 0
-            or (self.complex_frequencies_cache.shape[2] < maximum_position_index)
-            or self.complex_frequencies_cache.device != device
-        ):
-            self._compute_trigonometric_caches(maximum_position_index + 1, device)
-
-    def _apply_partial_rotary_embedding(
-        self, input: Tensor, complex_rotations: Tensor, rotary_dimension: int
-    ) -> Tensor:
-        """
-        Apply rotary embedding to a fraction of the head dimension.
-
-        :param Tensor input: Input tensor of shape (..., head_dimension)
-        :param Tensor cosine: Cosine values of shape (..., head_dimension/2)
-        :param Tensor sine: Sine values of shape (..., head_dimension/2)
-        :param int rotary_dimension: Dimension to apply rotary embedding to
-        :return Tensor: Tensor after applying rotary embedding
-        """
-        # Split the input into rotary and non-rotary parts
-        # (..., rotary_dimension)
-        input_rotary = input[..., :rotary_dimension]
-        # (..., head_dimension - rotary_dimension)
-        input_passive = input[..., rotary_dimension:]
-
-        # Convert the rotary part into complex numbers (real, imag) pairs
-        # Reshape to (..., rotary_dimension/2, 2) where the last dimension represents (real, imag)
-        complex_input = torch.view_as_complex(
-            input_rotary.float()
-            .reshape(*input_rotary.shape[:-1], self.rotary_dimension // 2, 2)
-            .contiguous()
-        )  # (..., rotary_dimension/2)
-
-        # Rotate in complex plane using the precomputed complex frequencies
-        rotated_complex = complex_input * complex_rotations  # (..., rotary_dimension/2)
-
-        # Convert back to real and reshape to original dimensions
-        rotated_input = (
-            torch.view_as_real(rotated_complex).flatten(-2).to(input.dtype)
-        )  # (..., rotary_dimension)
-
-        # Concatenate the rotated part with the passive part
-        return torch.cat(
-            (rotated_input, input_passive), dim=-1
-        )  # (..., head_dimension)
-
-    def rotate_query_or_key(
-        self, input: Tensor, positions: Optional[Tensor] = None, offset: int = 0
-    ) -> Tensor:
-        """
-        Apply rotary positional embeddings to a single tensor (query or key).
-
-        :param Tensor input: Input tensor of shape (batch_size, number_of_heads, sequence_length, head_dimension)
-        :param Tensor positions: Optional positions tensor of shape (batch_size, sequence_length)
-        :param int offset: Offset for position calculation
-        :return Tensor: Rotated tensor
-        """
-        batch_size, number_of_heads, sequence_length, head_dimension = input.shape
-
-        if positions is None:
-            positions = torch.arange(
-                offset, offset + sequence_length, device=input.device
-            ).unsqueeze(0)  # (1, sequence_length)
-        else:
-            positions = positions  # (batch_size, sequence_length)
-
-        maximum_position_index = int(positions.max().item())
-
-        self._ensure_cache_availability(maximum_position_index, input.device)
-
-        complex = self.complex_frequencies_cache[0, 0, positions].unsqueeze(
-            1
-        )  # (batch_size, 1, sequence_length, rotary_dimension/2)
-
-        # Rotary expects (..., D)
-        # input: (B, H, L, D)
-        return self._apply_partial_rotary_embedding(
-            input, complex, self.rotary_dimension
-        )
-
-    def rotate_query_and_key(
-        self,
-        query: Tensor,
-        key: Tensor,
-        positions: Optional[Tensor] = None,
-        offset: int = 0,
+    @abstractmethod
+    def trigonometric_position_frequencies(
+        self, positions: Tensor, device: torch.device
     ) -> tuple[Tensor, Tensor]:
         """
-        Apply rotary positional embeddings to query and key tensors.
+        Compute the sine and cosine components for the given positions.
 
-        :param Tensor query: Query tensor of shape (batch_size, number_of_heads, sequence_length, head_dimension)
-        :param Tensor key: Key tensor of shape (batch_size, number_of_heads, sequence_length, head_dimension)
-        :param Tensor positions: Optional positions tensor of shape (batch_size, sequence_length)
-        :param int offset: Offset for position calculation
-        :return Tuple[Tensor, Tensor]: Tuple of rotated query and key tensors
+        :param Tensor positions: [B, L] The positions for which to compute the rotations.
+        :param torch.device device: The device on which to compute the rotations.
         """
-        rotated_query = self.rotate_query_or_key(query, positions, offset)
-        rotated_key = self.rotate_query_or_key(key, positions, offset)
-        return rotated_query, rotated_key
+        raise NotImplementedError
 
-    def rotate_input(
-        self, input: Tensor, positions: Optional[Tensor] = None, offset: int = 0
+    def _rotate_half(self, features: Tensor) -> Tensor:
+        half_dimension = features.shape[-1] // 2
+        first_half, seconDalf = (
+            features[..., :half_dimension],
+            features[..., half_dimension:],
+        )  # [..., D/2], [..., D/2]
+        return torch.cat((-seconDalf, first_half), dim=-1)  # [..., D]
+
+    def _apply_partial_rotary_embedding(
+        self, features: Tensor, sine: Tensor, cosine: Tensor, rotary_dimension: int
     ) -> Tensor:
         """
-        Apply rotary positional embeddings to the input tensor without head dimension split.
+        Apply rotary embedding to a fraction of the dimension.
 
-        :param Tensor input: Input tensor of shape (batch_size, sequence_length, dimension)
-        :return Tensor: Rotated tensor with shape (batch_size, sequence_length, dimension)
+        :param Tensor features: tensor of shape [..., D] containing the features to be rotated
+        :param Tensor sine: tensor of shape [B, L, R] containing the sine values for the rotary embedding
+        :param Tensor cosine: tensor of shape [B, L, R] containing the cosine values for the rotary embedding
+        :param int rotary_dimension: Dimension to apply rotary embedding to
+        :return Tensor: Tensor of shape [..., D] after applying rotary embedding to the first R dimensions and leaving the rest unchanged
         """
-        batch_size, sequence_length, dimension = input.shape
-        # Make sure head dimension is even
 
-        if positions is None:
-            positions = torch.arange(
-                offset, offset + sequence_length, device=input.device
-            ).unsqueeze(0)  # (1, sequence_length)
-        else:
-            positions = positions  # (batch_size, sequence_length)
+        feature_dtype = features.dtype
+        features_rotary = features[..., :rotary_dimension].to(self.dtype)  # [..., R]
+        features_passive = features[..., rotary_dimension:]  # [..., D - R]
 
-        maximum_position_index = int(positions.max().item())
+        # Features have shape [B, ..., L, R], sine and cosine have shape [B, L, R]
+        middle_dimensions = features.ndim - sine.ndim
+        broadcast_slice = (slice(None),) + (None,) * middle_dimensions + (...,)
 
-        self._ensure_cache_availability(maximum_position_index, input.device)
+        rotated_rotary = (
+            (features_rotary * cosine[broadcast_slice])
+            + (self._rotate_half(features_rotary) * sine[broadcast_slice])
+        ).to(feature_dtype)  # [..., R]
+        return torch.cat((rotated_rotary, features_passive), dim=-1)  # [..., D]
 
-        complex = self.complex_frequencies_cache[
-            0, 0, positions
-        ]  # (batch_size, sequence_length, rotary_dimension/2)
+    @override
+    def forward(self, features: Tensor, positions: Tensor) -> Tensor:
+        rotated_features = self._apply_partial_rotary_embedding(
+            features,
+            *self.trigonometric_position_frequencies(positions, features.device),
+            self.rotary_dimension,
+        )  # [..., D]
+        return rotated_features
 
-        return self._apply_partial_rotary_embedding(
-            input, complex, self.rotary_dimension
-        )
 
-    def forward(
+class CachedIntegerRotaryPositionalEncoding(RotaryPositionalEncoding):
+    def __init__(
         self,
-        query: Tensor,
-        key: Tensor,
-        *,
-        positions: Optional[Tensor] = None,
-        sequence_length: Optional[int] = None,
-        offset: int = 0,
-    ) -> tuple[Tensor, Tensor, Optional[Tensor]]:
-        """
-        Note: This method assumes that the input query and key tensors are already reshaped to (batch_size, number_of_heads, sequence_length, head_dimension).
+        dimension: int,
+        rotational_fraction: float = 1.0,
+        base: int = 10000,
+        dtype: torch.dtype = torch.float32,
+    ):
+        super().__init__(
+            dimension=dimension,
+            rotational_fraction=rotational_fraction,
+            base=base,
+            dtype=dtype,
+        )
+        self.trigonometric_cache = torch.empty(0, device="cpu", dtype=dtype)
+        self.cache_length: int = 0
 
-        :param q: Query tensor of shape (batch_size, sequence_length, embedding_dimension)
-        :param k: Key tensor of shape (batch_size, sequence_length, embedding_dimension)
-        :param positions: Optional positions tensor of shape (batch_size, sequence_length)
-        :param sequence_length: Optional sequence length
-        :param offset: Offset for position calculation
-        :return: Tuple of (q, k, attention_bias)
-        """
-        q, k = self.rotate_query_and_key(query, key, positions, offset)
-        return q, k, None
+    def _trigonometric_cache(self, length: int, device: torch.device) -> Tensor:
+        if self.cache_length >= length and self.trigonometric_cache.device == device:
+            return self.trigonometric_cache
+
+        allocation_length = max(length, self.cache_length * 2)
+        positions = torch.arange(
+            allocation_length, device=device, dtype=self.dtype
+        )  # [L]
+        half_frequencies = torch.outer(positions, self.inverse_frequencies)  # [L, R/2]
+        frequencies = torch.cat((half_frequencies, half_frequencies), dim=-1)
+
+        self.trigonometric_cache = torch.stack(
+            (frequencies.sin(), frequencies.cos()), dim=-1
+        )  # [L, R, 2]
+        self.cache_length = allocation_length
+        return self.trigonometric_cache
+
+    @override
+    def trigonometric_position_frequencies(
+        self, positions: Tensor, device: torch.device
+    ) -> tuple[Tensor, Tensor]:
+        cache = self._trigonometric_cache(
+            int(positions.max().item() + 1), device
+        )  # [L, R, 2]
+        valid = cache[positions]  # [B, L, R, 2]
+        return valid[..., 0], valid[..., 1]  # [B, L, R], [B, L, R]
+
+
+class ContinuousRotaryPositionalEncoding(RotaryPositionalEncoding):
+    """
+    Rotary positional embedding with fractional position support.
+    """
+
+    @override
+    def trigonometric_position_frequencies(
+        self, positions: Tensor, device: torch.device
+    ) -> tuple[Tensor, Tensor]:
+        half_frequencies = torch.einsum(
+            "bl,d->bld",
+            positions.to(self.dtype),
+            self.inverse_frequencies,
+        )  # [B, L, R/2]
+        frequencies = torch.cat(
+            (half_frequencies, half_frequencies), dim=-1
+        )  # [B, L, R]
+        return frequencies.sin(), frequencies.cos()  # [B, L, R], [B, L, R]

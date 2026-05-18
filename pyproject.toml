@@ -23,11 +23,7 @@ dependencies = [
     "einops",       # Tensor operations
     "biopython",    # Biological sequence handling
     "safetensors",  # Safe and efficient model storage
-    "ipykernel",    # Jupyter notebook support
-    "nbformat",     # Jupyter notebook support
-    "ipywidgets",   # Jupyter notebook support
-    "umap-learn",   # Dimensionality reduction
-    "orfipy",       # ORF prediction
+    "bitsandbytes"  # 8-bit optimization
 ]
 
 [project.scripts]
@@ -43,9 +39,11 @@ where = ["src"]
 exclude = ["temp*", "tests*"]
 
 [project.optional-dependencies]
-dev = ["ruff", "pytest"]
+dev = ["ruff", "pytest", "umap-learn"]
 docs = ["sphinx", "sphinx-rtd-theme", "sphinx-autodoc-typehints", "myst-parser"]
+jupyter = ["ipykernel", "nbformat", "ipywidgets"]
 plmarg = ["xgboost"]
+orfpred = ["orfipy"]
 
 [build-system]
 requires = ["setuptools", "wheel"]
@@ -66,3 +64,8 @@ quote-style = "double"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--maxfail=5 --disable-warnings -q"
+
+[tool.pyright]
+reportPrivateImportUsage = false
+reportMissingTypeStubs = false
+typeCheckingMode = "strict"
