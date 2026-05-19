@@ -1,0 +1,83 @@
+from abc import ABC, abstractmethod
+from collections.abc import Sequence
+from typing import Generic, override
+
+from torch import Tensor
+from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import Dataset
+
+from tarp.data.sources.sequence import SequenceDataSource
+from tarp.preprocessing.augmentation.core import Augmentation
+from tarp.preprocessing.tokenizers.core import Tokenizer
+from tarp.typed.data import BatchT, RowT
+
+
+class SequenceDataset(ABC, Dataset[BatchT], Generic[RowT, BatchT]):
+    def __init__(
+        self,
+        source: SequenceDataSource[RowT],
+        tokenizer: Tokenizer,
+        sequence_column: str,
+        augmentation: Augmentation | None = None,
+        maximum_sequence_length: int | None = 2048,
+    ):
+        self.source = source
+        self.tokenizer = tokenizer
+        self.augmentation = augmentation
+        self.sequence_column = sequence_column
+        self.maximum_sequence_length = maximum_sequence_length
+        self.padding_value = tokenizer.pad_token_id
+
+    def __len__(self) -> int:
+        return self.source.height
+
+    @override
+    def __getitem__(self, index: int) -> BatchT:
+        row = self.source.retrieve(index)
+        return self.transform(index, row)
+
+    def __getitems__(
+        self,
+        indices: Sequence[int],
+        prefetched_rows: Sequence[RowT] | None = None,
+    ) -> Sequence[BatchT]:
+        rows = (
+            self.source.batch(indices) if prefetched_rows is None else prefetched_rows
+        )
+        return [self.transform(index, row) for index, row in zip(indices, rows)]
+
+    def preprocessing(self, sequence: str) -> tuple[Tensor, Tensor]:
+        sequence = (
+            self.augmentation.apply(sequence)
+            if self.augmentation is not None
+            else sequence
+        )
+        tokenized = self.tokenizer.encode(sequence)
+        if self.maximum_sequence_length is not None:
+            tokenized = tokenized[: self.maximum_sequence_length]
+        attention_mask = tokenized != self.padding_value
+        return tokenized, attention_mask
+
+    def pad_sequence_and_mask(self, batch: Sequence[BatchT]) -> dict[str, Tensor]:
+        sequences = [item["sequence"] for item in batch]
+        attention_masks = [item["attention_mask"] for item in batch]
+        padded_sequences = pad_sequence(
+            sequences,
+            batch_first=True,
+            padding_value=self.padding_value,
+        )
+        padded_attention_masks = pad_sequence(
+            attention_masks, batch_first=True, padding_value=0
+        )
+        return {
+            "sequence": padded_sequences,
+            "attention_mask": padded_attention_masks,
+        }
+
+    @abstractmethod
+    def transform(self, index: int, row: RowT) -> BatchT:
+        raise NotImplementedError
+
+    @abstractmethod
+    def collate(self, batch: Sequence[BatchT]) -> BatchT:
+        raise NotImplementedError

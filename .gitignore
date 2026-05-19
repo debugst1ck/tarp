@@ -4,9 +4,6 @@
 # Temporary files
 temp/
 
-# Ignore dataset files
-data/
-
 # Ignore logs
 logs/
 
