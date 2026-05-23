@@ -35,7 +35,7 @@ class ColorFormatterANSI(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         color = self._COLORS.get(record.levelname, self._RESET)
         # Minimize string construction overhead
-        return f"{color}[{record.levelname}]\t{self.formatTime(record, self.datefmt)} - {record.getMessage()}{self._RESET}"
+        return f"{color}[{record.levelname}]\t{self.formatTime(record, self.datefmt)} >>> {record.getMessage()}{self._RESET}"
 
 
 class ColoredLogger(Logger):
@@ -69,7 +69,7 @@ class ColoredLogger(Logger):
         )
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(
-            logging.Formatter("[%(levelname)s]\t%(asctime)s - %(message)s")
+            logging.Formatter("[%(levelname)s]\t%(asctime)s >>> %(message)s")
         )
         self._logger.addHandler(file_handler)
 
