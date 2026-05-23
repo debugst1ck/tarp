@@ -23,15 +23,13 @@ class ClassificationModel(nn.Module):
         sequence: Tensor,
         attention_mask: Tensor,
         *,
-        payload_mask: Tensor | None = None,
         positions: Tensor | None = None,
-    ) -> Tensor:
+    ) -> tuple[Tensor, Tensor | None]:
         sequence_embeddings = self.embedding(sequence)
-        pooled_output = self.encoder(
+        pooled, auxillary_loss = self.encoder(
             sequence_embeddings,
             attention_mask,
-            payload_mask=payload_mask,
             positions=positions,
             mode="pooled",
         )
-        return self.classification_head(pooled_output)
+        return self.classification_head(pooled), auxillary_loss
