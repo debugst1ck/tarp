@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from typing import override
+from typing import final, override
 
 import torch
 from torch import Tensor, nn
@@ -7,14 +7,14 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 from tarp.data.datasets.language.masked import MaskedLanguageDataset
-from tarp.model.heads.language import LanguageModel
+from tarp.model.tasks.language import LanguageModel
 from tarp.training.callbacks.core import Callback
 from tarp.training.trainer.core import Trainer
+from tarp.typed.batch import LanguageBatch
 
 
-class MaskedLanguageModelTrainer(
-    Trainer[LanguageModel, dict[str, Tensor], Tensor, Tensor]
-):
+@final
+class MaskedLanguageModelTrainer(Trainer[LanguageModel, LanguageBatch, Tensor, Tensor]):
     def __init__(
         self,
         model: LanguageModel,
@@ -59,7 +59,7 @@ class MaskedLanguageModelTrainer(
 
     @override
     def training_forward(
-        self, batch: dict[str, Tensor], batch_index: int
+        self, batch: LanguageBatch, batch_index: int
     ) -> tuple[Tensor, Tensor | None, Tensor | None]:
         sequence = batch["sequence"].to(self.context.device, non_blocking=True)
         attention_mask = batch["attention_mask"].to(
@@ -68,42 +68,33 @@ class MaskedLanguageModelTrainer(
         truth = batch["truth"].to(self.context.device, non_blocking=True)
 
         # For pure payload it is (truth != -100) & attention_mask.bool()
-        payload_mask = attention_mask.bool()
 
-        scores = self.context.model(
-            sequence,
-            attention_mask=attention_mask,
-            payload_mask=payload_mask,
-        )
+        scores, auxillary = self.context.model(sequence, attention_mask=attention_mask)
 
         loss = self.criterion(
             scores.reshape(-1, self.vocabulary_size), truth.reshape(-1)
         )
+
+        if auxillary is not None:
+            loss += auxillary
 
         return loss, scores.detach().cpu(), truth.detach().cpu()
 
     @override
     def validation_forward(
-        self, batch: dict[str, Tensor], batch_index: int
+        self, batch: LanguageBatch, batch_index: int
     ) -> tuple[Tensor, Tensor | None, Tensor | None]:
         sequence = batch["sequence"].to(self.context.device, non_blocking=True)
         attention_mask = batch["attention_mask"].to(
             self.context.device, non_blocking=True
         )
         truth = batch["truth"].to(self.context.device, non_blocking=True)
-
-        # For pure payload it is (truth != -100) & attention_mask.bool()
-        payload_mask = attention_mask.bool()
-
-        scores = self.context.model(
-            sequence,
-            attention_mask=attention_mask,
-            payload_mask=payload_mask,
-        )
-
+        scores, auxillary = self.context.model(sequence, attention_mask=attention_mask)
         loss = self.criterion(
             scores.reshape(-1, self.vocabulary_size), truth.reshape(-1)
         )
+        if auxillary is not None:
+            loss += auxillary
 
         return loss, scores.detach().cpu(), truth.detach().cpu()
 

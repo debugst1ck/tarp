@@ -2,15 +2,17 @@ from collections.abc import Sequence
 from typing import cast, override
 
 import torch
-from torch import Tensor
 
 from tarp.data.datasets.core import SequenceDataset
 from tarp.data.sources.sequence import SequenceDataSource
 from tarp.preprocessing.augmentation.core import Augmentation
 from tarp.preprocessing.tokenizers.core import Tokenizer
+from tarp.typed.batch import ClassificationBatch
 
 
-class ClassificationDataset(SequenceDataset[dict[str, str | float], dict[str, Tensor]]):
+class ClassificationDataset(
+    SequenceDataset[dict[str, str | float], ClassificationBatch]
+):
     def __init__(
         self,
         source: SequenceDataSource[dict[str, str | float]],
@@ -30,7 +32,7 @@ class ClassificationDataset(SequenceDataset[dict[str, str | float], dict[str, Te
         self.label_columns = label_columns
 
     @override
-    def transform(self, index: int, row: dict[str, str | float]) -> dict[str, Tensor]:
+    def transform(self, index: int, row: dict[str, str | float]) -> ClassificationBatch:
         sequence, attention_mask = self.preprocessing(
             cast(str, row[self.sequence_column])
         )
@@ -44,10 +46,12 @@ class ClassificationDataset(SequenceDataset[dict[str, str | float], dict[str, Te
         }
 
     @override
-    def collate(self, batch: Sequence[dict[str, Tensor]]) -> dict[str, Tensor]:
-        sequences_and_masks = self.pad_sequence_and_mask(batch)
+    def collate(self, batch: Sequence[ClassificationBatch]) -> ClassificationBatch:
+        padded_seqs, padded_masks = self.pad_sequence_and_mask(
+            [item["sequence"] for item in batch],
+            [item["attention_mask"] for item in batch],
+        )
         labels = torch.stack([item["labels"] for item in batch], dim=0)
-        return {
-            **sequences_and_masks,
-            "labels": labels,
-        }
+        return ClassificationBatch(
+            sequence=padded_seqs, attention_mask=padded_masks, labels=labels
+        )

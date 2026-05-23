@@ -7,20 +7,21 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
 from tarp.data.datasets.classification.multilabel import MultiLabelClassificationDataset
-from tarp.functional.evaluation.classification import (
+from tarp.functional.statistics.classification import (
     accuracy,
     macro_f1_score,
     precision,
     recall,
     top_k_accuracy,
 )
-from tarp.model.heads.classification import ClassificationModel
+from tarp.model.tasks.classification import ClassificationModel
 from tarp.training.callbacks.core import Callback
 from tarp.training.trainer.core import Trainer
+from tarp.typed.batch import ClassificationBatch
 
 
 class MultiLabelClassificationTrainer(
-    Trainer[ClassificationModel, dict[str, Tensor], Tensor, Tensor]
+    Trainer[ClassificationModel, ClassificationBatch, Tensor, Tensor]
 ):
     def __init__(
         self,
@@ -62,13 +63,13 @@ class MultiLabelClassificationTrainer(
 
     @override
     def training_forward(
-        self, batch: dict[str, Tensor], batch_index: int
+        self, batch: ClassificationBatch, batch_index: int
     ) -> tuple[Tensor, Tensor | None, Tensor | None]:
         inputs = batch["sequence"].to(self.context.device)
         labels = batch["labels"].to(self.context.device)
         attention_mask = batch["attention_mask"].to(self.context.device)
         scores, auxillary = self.context.model.forward(
-            inputs, attention_mask=attention_mask, payload_mask=attention_mask
+            inputs, attention_mask=attention_mask
         )
         loss = self.criterion(scores, labels)
         if auxillary is not None:
@@ -77,13 +78,13 @@ class MultiLabelClassificationTrainer(
 
     @override
     def validation_forward(
-        self, batch: dict[str, Tensor], batch_index: int
+        self, batch: ClassificationBatch, batch_index: int
     ) -> tuple[Tensor, Tensor | None, Tensor | None]:
         inputs = batch["sequence"].to(self.context.device)
         labels = batch["labels"].to(self.context.device)
         attention_mask = batch["attention_mask"].to(self.context.device)
         scores, auxillary = self.context.model.forward(
-            inputs, attention_mask=attention_mask, payload_mask=attention_mask
+            inputs, attention_mask=attention_mask
         )
         loss = self.criterion(scores, labels)
         if auxillary is not None:

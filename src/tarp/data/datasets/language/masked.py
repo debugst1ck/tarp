@@ -2,16 +2,16 @@ from collections.abc import Sequence
 from typing import override
 
 import torch
-from torch import Tensor
 from torch.nn.utils.rnn import pad_sequence
 
 from tarp.data.datasets.core import SequenceDataset
 from tarp.data.sources.sequence import SequenceDataSource
 from tarp.preprocessing.augmentation.core import Augmentation
 from tarp.preprocessing.tokenizers.core import Tokenizer
+from tarp.typed.batch import LanguageBatch
 
 
-class MaskedLanguageDataset(SequenceDataset[dict[str, str], dict[str, Tensor]]):
+class MaskedLanguageDataset(SequenceDataset[dict[str, str], LanguageBatch]):
     def __init__(
         self,
         source: SequenceDataSource[dict[str, str]],
@@ -33,7 +33,7 @@ class MaskedLanguageDataset(SequenceDataset[dict[str, str], dict[str, Tensor]]):
         self.maximum_span_length = maximum_span_length
 
     @override
-    def transform(self, index: int, row: dict[str, str]) -> dict[str, Tensor]:
+    def transform(self, index: int, row: dict[str, str]) -> LanguageBatch:
         raw_sequence = row[self.sequence_column]
         sequence, attention_mask = self.preprocessing(raw_sequence)
         truth = sequence.clone()
@@ -115,12 +115,14 @@ class MaskedLanguageDataset(SequenceDataset[dict[str, str], dict[str, Tensor]]):
         }
 
     @override
-    def collate(self, batch: Sequence[dict[str, Tensor]]) -> dict[str, Tensor]:
-        sequences_and_masks = self.pad_sequence_and_mask(batch)
+    def collate(self, batch: Sequence[LanguageBatch]) -> LanguageBatch:
+        sequences, masks = self.pad_sequence_and_mask(
+            [item["sequence"] for item in batch],
+            [item["attention_mask"] for item in batch],
+        )
         padded_truths = pad_sequence(
             [item["truth"] for item in batch], batch_first=True, padding_value=-100
         )
-        return {
-            **sequences_and_masks,
-            "truth": padded_truths,
-        }
+        return LanguageBatch(
+            sequence=sequences, attention_mask=masks, truth=padded_truths
+        )

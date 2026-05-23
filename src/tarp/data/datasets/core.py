@@ -58,21 +58,18 @@ class SequenceDataset(ABC, Dataset[BatchT], Generic[RowT, BatchT]):
         attention_mask = tokenized != self.padding_value
         return tokenized, attention_mask
 
-    def pad_sequence_and_mask(self, batch: Sequence[BatchT]) -> dict[str, Tensor]:
-        sequences = [item["sequence"] for item in batch]
-        attention_masks = [item["attention_mask"] for item in batch]
+    def pad_sequence_and_mask(
+        self, sequences: Sequence[Tensor], attention_masks: Sequence[Tensor]
+    ) -> tuple[Tensor, Tensor]:
         padded_sequences = pad_sequence(
-            sequences,
+            list(sequences),
             batch_first=True,
             padding_value=self.padding_value,
         )
         padded_attention_masks = pad_sequence(
-            attention_masks, batch_first=True, padding_value=0
+            list(attention_masks), batch_first=True, padding_value=0
         )
-        return {
-            "sequence": padded_sequences,
-            "attention_mask": padded_attention_masks,
-        }
+        return padded_sequences, padded_attention_masks
 
     @abstractmethod
     def transform(self, index: int, row: RowT) -> BatchT:

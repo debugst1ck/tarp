@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from typing import override
+from typing import final, override
 
 import torch
 from torch import Tensor, nn
@@ -8,14 +8,15 @@ from torch.optim.lr_scheduler import LRScheduler
 
 from tarp.cli.core import Console
 from tarp.data.datasets.language.masked import MaskedLanguageDataset
-from tarp.functional.evaluation.classification import accuracy, top_k_accuracy
-from tarp.model.heads.language import LanguageModel
+from tarp.model.tasks.language import LanguageModel
 from tarp.training.callbacks.core import Callback
 from tarp.training.trainer.core import Trainer
+from tarp.typed.batch import LanguageBatch
 
 
+@final
 class LanguageReconstructionTrainer(
-    Trainer[LanguageModel, dict[str, Tensor], Tensor, Tensor]
+    Trainer[LanguageModel, LanguageBatch, Tensor, Tensor]
 ):
     def __init__(
         self,
@@ -61,7 +62,7 @@ class LanguageReconstructionTrainer(
 
     @override
     def training_forward(
-        self, batch: dict[str, Tensor], batch_index: int
+        self, batch: LanguageBatch, batch_index: int
     ) -> tuple[Tensor, Tensor | None, Tensor | None]:
         sequence = batch["sequence"].to(self.context.device, non_blocking=True)
         attention_mask = batch["attention_mask"].to(
@@ -69,73 +70,67 @@ class LanguageReconstructionTrainer(
         )
         truth = batch["truth"].to(self.context.device, non_blocking=True)
         # For pure payload it is (truth != -100) & attention_mask.bool()
-        payload_mask = attention_mask
-        original_sequence = torch.where(
+        reconstruction_targets = torch.where(
             attention_mask.bool(),
             torch.where(truth != -100, truth, sequence),
-            torch.full_like(sequence, -100),
+            torch.tensor(-100, device=sequence.device),
         )
 
-        scores, auxillary = self.context.model(
-            sequence,
-            attention_mask=attention_mask,
-            payload_mask=payload_mask,
+        masked_scores, auxillary = self.context.model(
+            sequence, attention_mask=attention_mask
         )
 
-        loss = self.criterion(
-            scores.reshape(-1, self.vocabulary_size), truth.reshape(-1)
+        masked_loss = self.criterion(
+            masked_scores.reshape(-1, self.vocabulary_size), truth.reshape(-1)
         )
         reconstruction_loss = self.criterion(
-            scores.reshape(-1, self.vocabulary_size),
-            original_sequence.reshape(-1),
+            masked_scores.reshape(-1, self.vocabulary_size),
+            reconstruction_targets.reshape(-1),
         )
 
-        loss += reconstruction_loss
+        loss = masked_loss + (0.0 * reconstruction_loss)
         if auxillary is not None:
             loss += auxillary
 
         if batch_index % 100 == 0:
             Console.debug(
-                f"Batch {batch_index}: Loss = {loss.item():.4f}, Reconstruction Loss = {reconstruction_loss.item():.4f}, Auxillary loss = {auxillary.item() if auxillary is not None else 0.0:.4f}"
+                f"Batch {batch_index}\t: MLM Loss = {masked_loss.item():.4f} | Reconstruction Loss = {reconstruction_loss.item():.4f} | Auxillary loss = {auxillary.item() if auxillary is not None else 0.0:.4f}"
             )
 
-        return loss, scores.detach().cpu(), truth.detach().cpu()
+        return loss, masked_scores.detach().cpu(), truth.detach().cpu()
 
     @override
     def validation_forward(
-        self, batch: dict[str, Tensor], batch_index: int
+        self, batch: LanguageBatch, batch_index: int
     ) -> tuple[Tensor, Tensor | None, Tensor | None]:
         sequence = batch["sequence"].to(self.context.device, non_blocking=True)
         attention_mask = batch["attention_mask"].to(
             self.context.device, non_blocking=True
         )
         truth = batch["truth"].to(self.context.device, non_blocking=True)
-        payload_mask = attention_mask
-        original_sequence = torch.where(
+        reconstruction_targets = torch.where(
             attention_mask.bool(),
             torch.where(truth != -100, truth, sequence),
-            torch.full_like(sequence, -100),
+            torch.tensor(-100, device=sequence.device),
         )
 
-        scores, auxillary = self.context.model(
-            sequence,
-            attention_mask=attention_mask,
-            payload_mask=payload_mask,
+        masked_scores, auxillary = self.context.model(
+            sequence, attention_mask=attention_mask
         )
 
-        loss = self.criterion(
-            scores.reshape(-1, self.vocabulary_size), truth.reshape(-1)
+        masked_loss = self.criterion(
+            masked_scores.reshape(-1, self.vocabulary_size), truth.reshape(-1)
         )
         reconstruction_loss = self.criterion(
-            scores.reshape(-1, self.vocabulary_size),
-            original_sequence.reshape(-1),
+            masked_scores.reshape(-1, self.vocabulary_size),
+            reconstruction_targets.reshape(-1),
         )
 
-        loss += reconstruction_loss
+        loss = masked_loss + (0.0 * reconstruction_loss)
         if auxillary is not None:
             loss += auxillary
 
-        return loss, scores.detach().cpu(), truth.detach().cpu()
+        return loss, masked_scores.detach().cpu(), truth.detach().cpu()
 
     @override
     def compute_metrics(
