@@ -26,20 +26,6 @@ def log_laplace(distances: Tensor, bandwidth: Tensor) -> Tensor:
     return -distances.abs() / bandwidth
 
 
-def log_epanechnikov(distances: Tensor, bandwidth: Tensor) -> Tensor:
-    """
-    Logarithm of the Epanechnikov parabolic boundary kernel function.
-    """
-    info = torch.finfo(distances.dtype)
-    scaled_square = distances.square() / bandwidth.square()
-    base = (1.0 - scaled_square).clamp(min=info.tiny)
-    return torch.where(
-        scaled_square < 1.0,
-        torch.log(base),
-        torch.full_like(base, info.min / 2),
-    )
-
-
 def log_rational_power(distances: Tensor, bandwidth: Tensor) -> Tensor:
     """
     Logarithm of the Rational Quadratic kernel function.
@@ -47,17 +33,17 @@ def log_rational_power(distances: Tensor, bandwidth: Tensor) -> Tensor:
     return -0.5 * torch.log1p(distances.square() / bandwidth.square())
 
 
-def log_triweight(distances: Tensor, bandwidth: Tensor) -> Tensor:
+def log_epanechnikov(distances: Tensor, bandwidth: Tensor) -> Tensor:
     """
-    Logarithm of the smooth Triweight compact support boundary kernel.
+    Logarithm of the Epanechnikov parabolic boundary kernel function.
     """
     info = torch.finfo(distances.dtype)
     scaled_square = distances.square() / bandwidth.square()
-    base = (1.0 - scaled_square).clamp(min=info.tiny)
+    inside = scaled_square < 1.0
     return torch.where(
-        scaled_square < 1.0,
-        3.0 * torch.log(base),
-        torch.full_like(base, info.min / 2),
+        inside,
+        torch.log1p(-torch.where(inside, scaled_square, 0.0)),
+        torch.full_like(scaled_square, info.min / 2),
     )
 
 
@@ -67,9 +53,23 @@ def log_quartic(distances: Tensor, bandwidth: Tensor) -> Tensor:
     """
     info = torch.finfo(distances.dtype)
     scaled_square = distances.square() / bandwidth.square()
-    base = (1.0 - scaled_square).clamp(min=info.tiny)
+    inside = scaled_square < 1.0
     return torch.where(
-        scaled_square < 1.0,
-        2.0 * torch.log(base),
-        torch.full_like(base, info.min / 2),
+        inside,
+        2.0 * torch.log1p(-torch.where(inside, scaled_square, 0.0)),
+        torch.full_like(scaled_square, info.min / 2),
+    )
+
+
+def log_triweight(distances: Tensor, bandwidth: Tensor) -> Tensor:
+    """
+    Logarithm of the smooth Triweight compact support boundary kernel.
+    """
+    info = torch.finfo(distances.dtype)
+    scaled_square = distances.square() / bandwidth.square()
+    inside = scaled_square < 1.0
+    return torch.where(
+        inside,
+        3.0 * torch.log1p(-torch.where(inside, scaled_square, 0.0)),
+        torch.full_like(scaled_square, info.min / 2),
     )
