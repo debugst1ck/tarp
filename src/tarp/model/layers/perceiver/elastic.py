@@ -3,14 +3,14 @@ from typing import NamedTuple, final, override
 import torch
 from torch import Tensor, nn
 
-from tarp.functional.kernels.linear import quartic
+from tarp.functional.kernels.log import log_quartic
 
 
 class ElasticOptimalTransportPerceiverOutput(NamedTuple):
     latent_tokens: Tensor
     latent_mask: Tensor
     latent_positions: Tensor
-    transport_plan: Tensor
+    log_transport_plan: Tensor
     window_indices: Tensor
 
 
@@ -22,7 +22,7 @@ class ElasticOptimalTransportPerceiver(nn.Module):
         window_radius: int,
         temperature: float = 0.1,
         overflow_threshold: float = 1.0,
-        iterations: int = 4,
+        iterations: int = 6,
         bias: bool = False,
         dropout: float = 0.05,
         hidden_dimension: int | None = None,
@@ -47,14 +47,26 @@ class ElasticOptimalTransportPerceiver(nn.Module):
 
     @override
     def forward(
-        self, sequence_embeddings: Tensor, attention_mask: Tensor, latent_size: int
+        self,
+        sequence_embeddings: Tensor,
+        attention_mask: Tensor,
+        latent_size: int,
+        latent_lengths: Tensor,
     ) -> ElasticOptimalTransportPerceiverOutput:
         batch_size, sequence_length, _ = sequence_embeddings.size()
-        content_lengths = attention_mask.sum(dim=1, keepdim=True).clamp_min(1)  # (B, 1)
-        attention_mask_expanded = attention_mask.unsqueeze(-1)  # (B, L, 1)
 
-        epsilon = torch.finfo(sequence_embeddings.dtype).eps
-        negative_infinity = torch.finfo(sequence_embeddings.dtype).min
+        dtype = sequence_embeddings.dtype
+        device = sequence_embeddings.device
+        epsilon = torch.finfo(dtype).eps
+        negative_infinity = torch.finfo(dtype).min
+
+        content_lengths = (
+            attention_mask.sum(dim=1, keepdim=True).to(dtype).clamp_min(1)
+        )  # (B, 1)
+        attention_mask_expanded = attention_mask.unsqueeze(-1)  # (B, L, 1)
+        latent_lengths = latent_lengths.clamp_max(latent_size).reshape(
+            batch_size, 1
+        )  # (B, 1)
 
         bandwidth_score, coordinate_score = self.hyperparameter_projection(
             sequence_embeddings
@@ -64,9 +76,8 @@ class ElasticOptimalTransportPerceiver(nn.Module):
             torch.sigmoid(bandwidth_score) * self.window_radius + 0.5
         )  # (B, L, 1)
 
-        latent_span = max(latent_size - 1, 1)
+        latent_span = (latent_lengths - 1).clamp_min(1)
         source_span = (content_lengths - 1).clamp_min(1)
-
         step_size = (latent_span / source_span).unsqueeze(-1)  # (B, 1, 1)
 
         coordinate_shifts = 0.25 * step_size * torch.tanh(coordinate_score)  # (B, L, 1)
@@ -74,64 +85,72 @@ class ElasticOptimalTransportPerceiver(nn.Module):
             -1
         ) * step_size  # (B, L, 1)
 
-        source_coordinates = (original_coordinates + coordinate_shifts).clamp(
-            0, latent_size - 1
-        )  # (B, L, 1)
+        source_coordinates = torch.minimum(
+            (original_coordinates + coordinate_shifts).clamp_min(0),
+            (latent_lengths - 1).to(dtype).unsqueeze(-1),
+        )
 
         source_indices = source_coordinates.round().long()
 
         window_offsets = torch.arange(
             -self.window_radius,
             self.window_radius + 1,
-            device=sequence_embeddings.device,
+            device=device,
         ).reshape(1, 1, self.window_width)  # (1, 1, W)
 
         window_indices = source_indices + window_offsets  # (B, L, W)
         boundary_mask = (window_indices >= 0) & (
-            window_indices < latent_size
+            window_indices < latent_lengths.unsqueeze(-1)
         )  # (B, L, W)
         window_indices = window_indices.clamp(0, latent_size - 1)  # (B, L, W)
 
         # Distance from window indices to source coordinates
-        distance_to_window = (
-            window_indices.to(source_coordinates.dtype) - source_coordinates
-        )
+        distance_to_window = window_indices.to(dtype) - source_coordinates
 
         # This is how much each token contributes to each window position, based on distance and bandwidth
-        window_density = quartic(distance_to_window, bandwidths)  # (B, L, W)
+        log_transport_cost = log_quartic(distance_to_window, bandwidths)  # (B, L, W)
 
-        # Transport cost is one over the density, with overflow handling
-        transport_cost = 1.0 / window_density.clamp_min(epsilon)  # (B, L, W)
+        routing_mask = boundary_mask.to(dtype) * attention_mask_expanded  # (B, L, W)
 
-        routing_mask = (
-            boundary_mask.to(sequence_embeddings.dtype) * attention_mask_expanded
-        )  # (B, L, W)
-
-        log_potentials = (-transport_cost / self.temperature).masked_fill(
-            ~routing_mask.bool(), negative_infinity
+        log_potentials = (
+            (log_transport_cost / self.temperature)
+            .clamp_min(-16.0)  # Logit floor
+            .masked_fill(~routing_mask.bool(), negative_infinity)
         )  # (B, L, W)
 
         log_source_budgets = torch.where(
             attention_mask > 0, 0.0, negative_infinity
         ).unsqueeze(-1)  # (B, L, 1)
-        log_sink_budgets = (content_lengths / latent_size).log()  # (B, 1)
+        log_sink_budgets = (content_lengths / latent_lengths).log()  # (B, 1)
 
         sink_dual_potentials = torch.zeros(
-            batch_size, latent_size, device=sequence_embeddings.device
+            batch_size,
+            latent_size,
+            device=device,
+            dtype=dtype,
         )  # (B, T)
         source_dual_potentials = torch.zeros(
-            batch_size, sequence_length, 1, device=sequence_embeddings.device
+            batch_size,
+            sequence_length,
+            1,
+            device=device,
+            dtype=dtype,
         )  # (B, L, 1)
         overflow_buffer = torch.full(
             (batch_size, sequence_length, 1),
             fill_value=-self.overflow_threshold / self.temperature,
-            device=sequence_embeddings.device,
-            dtype=sequence_embeddings.dtype,
+            device=device,
+            dtype=dtype,
         ).masked_fill(~attention_mask_expanded.bool(), negative_infinity)
 
-        batch_indices = torch.arange(
-            batch_size, device=sequence_embeddings.device
-        ).reshape(batch_size, 1, 1)  # (B, 1, 1)
+        latent_capacity_mask = (
+            torch.arange(latent_size, device=device, dtype=dtype).unsqueeze(0)
+            < latent_lengths
+        )
+
+        batch_indices = torch.arange(batch_size, device=device).reshape(
+            batch_size, 1, 1
+        )  # (B, 1, 1)
 
         for _ in range(self.iterations):
             windowed_sink_potentials = sink_dual_potentials[
@@ -149,17 +168,37 @@ class ElasticOptimalTransportPerceiver(nn.Module):
             )  # (B, L, 1)
 
             window_potentials = source_dual_potentials + log_potentials  # (B, L, W)
-            batch_max = window_potentials.flatten(1).max(dim=1, keepdim=True).values
+
+            sink_max = torch.full_like(
+                sink_dual_potentials, negative_infinity
+            ).scatter_reduce_(
+                1,
+                window_indices.reshape(batch_size, -1),
+                window_potentials.reshape(batch_size, -1).masked_fill(
+                    ~routing_mask.reshape(batch_size, -1).bool(), negative_infinity
+                ),
+                reduce="amax",
+                include_self=True,
+            )  # (B, T)
+            gathered_sink_max = sink_max[batch_indices, window_indices]  # (B, L, W)
             shifted_potentials_exponential = (
-                window_potentials - batch_max.unsqueeze(-1)
+                window_potentials - gathered_sink_max
             ).exp() * routing_mask  # (B, L, W)
             aggregated_mass = torch.zeros_like(sink_dual_potentials).scatter_add_(
                 1,
                 window_indices.reshape(batch_size, -1),
                 shifted_potentials_exponential.reshape(batch_size, -1),
             )  # (B, T)
-            sink_marginal_log = aggregated_mass.clamp_min(epsilon).log() + batch_max
-            sink_dual_potentials = log_sink_budgets - sink_marginal_log  # (B, T)
+            sink_marginal_log = torch.where(
+                aggregated_mass > 0,
+                aggregated_mass.clamp_min(epsilon).log() + sink_max,
+                torch.zeros_like(sink_max),
+            )
+            sink_dual_potentials = torch.where(
+                aggregated_mass > 0,
+                log_sink_budgets - sink_marginal_log,
+                torch.zeros_like(sink_max),
+            ).masked_fill(~latent_capacity_mask, 0.0)  # (B, T)
 
         windowed_sink_potentials = sink_dual_potentials[
             batch_indices, window_indices
@@ -192,8 +231,8 @@ class ElasticOptimalTransportPerceiver(nn.Module):
             batch_size,
             latent_size,
             self.model_dimension,
-            device=sequence_embeddings.device,
-            dtype=sequence_embeddings.dtype,
+            device=device,
+            dtype=dtype,
         ).scatter_add_(
             1,
             expanded_window_indices.reshape(batch_size, -1, self.model_dimension),
@@ -211,24 +250,28 @@ class ElasticOptimalTransportPerceiver(nn.Module):
             epsilon
         )  # (B, T, D)
 
-        latent_mask = (latent_density > epsilon).to(sequence_embeddings.dtype)  # (B, T)
+        latent_mask = ((latent_density > epsilon) & latent_capacity_mask).to(
+            dtype
+        )  # (B, T)
 
         # Positions used to calculate RoPE
-        sink_grid = torch.arange(
-            latent_size,
-            device=sequence_embeddings.device,
-            dtype=sequence_embeddings.dtype,
-        ).unsqueeze(0)  # (1, T)
         latent_positions = (
-            sink_grid * (content_lengths - 1).clamp_min(1) / (latent_size - 1)
-        )  # (B, T)
-        latent_positions = latent_positions * latent_mask
+            torch.arange(
+                latent_size,
+                device=device,
+                dtype=dtype,
+            ).unsqueeze(0)
+            * (source_span / latent_span)
+            * latent_mask
+        )
 
         return ElasticOptimalTransportPerceiverOutput(
             latent_tokens=latent_tokens,
             latent_mask=latent_mask,
             latent_positions=latent_positions,
-            transport_plan=transport_plan,
+            log_transport_plan=log_transport_plan.masked_fill(
+                ~routing_mask.bool(), negative_infinity
+            ),
             window_indices=window_indices,
         )
 
