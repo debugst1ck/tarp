@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import NamedTuple, final, override
 
 import torch
@@ -10,7 +11,8 @@ class ElasticOptimalTransportPerceiverOutput(NamedTuple):
     latent_tokens: Tensor
     latent_mask: Tensor
     latent_positions: Tensor
-    log_transport_plan: Tensor
+    latent_density: Tensor
+    transport_plan: Tensor
     window_indices: Tensor
 
 
@@ -26,6 +28,7 @@ class ElasticOptimalTransportPerceiver(nn.Module):
         bias: bool = False,
         dropout: float = 0.05,
         hidden_dimension: int | None = None,
+        kernel_function: Callable[[Tensor, Tensor], Tensor] = log_quartic,
     ):
         super().__init__()
         self.model_dimension = model_dimension
@@ -33,9 +36,9 @@ class ElasticOptimalTransportPerceiver(nn.Module):
         self.temperature = temperature
         self.overflow_threshold = overflow_threshold
         self.iterations = iterations
-        self.bias = bias
         self.window_width = 2 * window_radius + 1
         self.hidden_dimension = hidden_dimension or model_dimension
+        self.kernel_function = kernel_function
 
         # For drift and bandwidth hyperparameters
         self.hyperparameter_projection = nn.Sequential(
@@ -108,7 +111,9 @@ class ElasticOptimalTransportPerceiver(nn.Module):
         distance_to_window = window_indices.to(dtype) - source_coordinates
 
         # This is how much each token contributes to each window position, based on distance and bandwidth
-        log_transport_cost = log_quartic(distance_to_window, bandwidths)  # (B, L, W)
+        log_transport_cost = self.kernel_function(
+            distance_to_window, bandwidths
+        )  # (B, L, W)
 
         routing_mask = boundary_mask.to(dtype) * attention_mask_expanded  # (B, L, W)
 
@@ -269,9 +274,8 @@ class ElasticOptimalTransportPerceiver(nn.Module):
             latent_tokens=latent_tokens,
             latent_mask=latent_mask,
             latent_positions=latent_positions,
-            log_transport_plan=log_transport_plan.masked_fill(
-                ~routing_mask.bool(), negative_infinity
-            ),
+            latent_density=latent_density,
+            transport_plan=transport_plan,
             window_indices=window_indices,
         )
 
@@ -306,3 +310,12 @@ class ElasticOptimalTransportPerceiver(nn.Module):
         ).sum(dim=2)  # (B, L, D)
 
         return reconstructed_sequence
+
+    def pool(
+        self, latent_tokens: Tensor, latent_density: Tensor, latent_mask: Tensor
+    ) -> Tensor:
+        weights = latent_density * latent_mask  # (B, T)
+        weights = weights / weights.sum(dim=1, keepdim=True).clamp_min(
+            torch.finfo(weights.dtype).eps
+        )  # (B, T)
+        return (latent_tokens * weights.unsqueeze(-1)).sum(dim=1)  # (B, D)
