@@ -9,7 +9,6 @@ keywords = ["antimicrobial resistance", "deep learning", "bioinformatics", "mach
 requires-python = ">=3.12"
 
 dependencies = [
-    "pandas",       # Backwards compatibility for users who haven't switched to polars
     "polars",       # Data manipulation
     "numpy",        # Numerical operations
     "scikit-learn", # Machine learning utilities
@@ -20,10 +19,8 @@ dependencies = [
     "plotly",       # Interactive visualizations
     "pyarrow",      # Efficient data storage and retrieval
     "scipy",        # Scientific computing
-    "einops",       # Tensor operations
     "biopython",    # Biological sequence handling
     "safetensors",  # Safe and efficient model storage
-    "bitsandbytes"  # 8-bit optimization
 ]
 
 [project.scripts]
@@ -68,4 +65,3 @@ addopts = "--maxfail=5 --disable-warnings -q"
 [tool.pyright]
 reportPrivateImportUsage = false
 reportMissingTypeStubs = false
-typeCheckingMode = "strict"
