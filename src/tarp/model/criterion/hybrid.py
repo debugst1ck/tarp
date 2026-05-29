@@ -25,7 +25,7 @@ class LabelDistributionAwareMarginLoss(Criterion):
         if margins.max() > 0:
             margins = margins * (maximum_margin / margins.max())
         self.margins: Tensor
-        self.register_buffer("margins", self.margins)
+        self.register_buffer("margins", margins)
 
     @override
     def forward(self, scores: Tensor, targets: Tensor) -> Tensor:
