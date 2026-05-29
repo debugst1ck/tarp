@@ -171,12 +171,13 @@ class Trainer(ABC, Generic[ModelT, BatchT, PredictionT, TargetT]):
 
             # If scale decreased, the step was skipped due to an inf/nan value
             stepped = self.context.scaler.get_scale() >= old_scale
+            if not stepped:
+                Console.warning("Optimizer step skipped due to inf/nan gradients.")
         else:
             self.context.optimizer.step()
             stepped = True
 
-        if stepped:
-            self.context.optimizer.zero_grad(set_to_none=True)
+        self.context.optimizer.zero_grad(set_to_none=True)
         return stepped
 
     def fit(self) -> Self:
