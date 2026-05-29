@@ -13,6 +13,7 @@ class ElasticOptimalTransportPerceiverOutput(NamedTuple):
     latent_positions: Tensor
     latent_density: Tensor
     transport_plan: Tensor
+    log_transport_plan: Tensor
     window_indices: Tensor
 
 
@@ -26,7 +27,7 @@ class ElasticOptimalTransportPerceiver(nn.Module):
         overflow_threshold: float = 1.0,
         iterations: int = 6,
         bias: bool = False,
-        dropout: float = 0.05,
+        dropout: float = 0.1,
         hidden_dimension: int | None = None,
         kernel_function: Callable[[Tensor, Tensor], Tensor] = log_quartic,
     ):
@@ -36,6 +37,7 @@ class ElasticOptimalTransportPerceiver(nn.Module):
         self.temperature = temperature
         self.overflow_threshold = overflow_threshold
         self.iterations = iterations
+        self.dropout = dropout
         self.window_width = 2 * window_radius + 1
         self.hidden_dimension = hidden_dimension or model_dimension
         self.kernel_function = kernel_function
@@ -44,7 +46,7 @@ class ElasticOptimalTransportPerceiver(nn.Module):
         self.hyperparameter_projection = nn.Sequential(
             nn.Linear(model_dimension, self.hidden_dimension, bias=bias),
             nn.SiLU(),
-            nn.Dropout(dropout),
+            nn.Dropout(self.dropout),
             nn.Linear(self.hidden_dimension, 2, bias=bias),
         )
 
@@ -276,6 +278,7 @@ class ElasticOptimalTransportPerceiver(nn.Module):
             latent_positions=latent_positions,
             latent_density=latent_density,
             transport_plan=transport_plan,
+            log_transport_plan=log_transport_plan,
             window_indices=window_indices,
         )
 

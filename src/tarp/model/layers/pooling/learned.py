@@ -32,32 +32,27 @@ class SelfAttentionPooling(nn.Module):
     @override
     def forward(
         self,
-        input: Tensor,
-        attention_mask: Tensor,
-        return_attention: bool = False,
-    ) -> Tensor | tuple[Tensor, Tensor]:
+        features: Tensor,
+        attention_bias: Tensor,
+    ) -> Tensor:
         """
-        :param Tensor input: Input tensor of shape `(batch_size, sequence_length, feature_dimension)`
-        :param Tensor attention_mask: Optional attention mask for padding tokens. (0 = pad)
+        :param Tensor features: Input tensor of shape `(batch_size, sequence_length, feature_dimension)`
+        :param Tensor attention_bias: Optional bias tensor of shape `(batch_size, sequence_length)` to be added to the attention scores.
         :param bool return_attention: Whether to return the attention weights.
         :return: The pooled output tensor, and optionally the attention weights.
         :rtype: Union[Tensor, tuple[Tensor, Tensor]]
         """
 
         # Compute attention scores, scaled by the square root of feature dimension
-        scores = input @ self.query_vector / math.sqrt(self.feature_dimension)  # (B, L)
+        scores = torch.einsum("bld,d->bl", features, self.query_vector) / math.sqrt(
+            self.feature_dimension
+        )  # (B, L)
 
-        scores = scores.masked_fill(attention_mask == 0, float("-inf"))
+        scores = scores + attention_bias  # (B, L)
 
         # Calculate attention weights
-        attention_weights = F.softmax(scores, dim=1)  # (B, L)
-
-        # Reshape attention weights to match the input tensor shape
-        attention_weights = attention_weights.unsqueeze(-1)  # (B, L, 1)
+        weights = F.softmax(scores, dim=1)  # (B, L)
 
         # Weighted sum
-        pooled_output = torch.sum(input * attention_weights, dim=1)  # (B, D)
-
-        if return_attention:
-            return pooled_output, attention_weights
-        return pooled_output
+        context = torch.einsum("bld,bl->bd", features, weights)  # (B, D)
+        return context
