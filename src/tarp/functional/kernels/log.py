@@ -43,7 +43,7 @@ def log_epanechnikov(distances: Tensor, bandwidth: Tensor) -> Tensor:
     return torch.where(
         inside,
         torch.log1p(-torch.where(inside, scaled_square, 0.0)),
-        torch.full_like(scaled_square, info.min / 2),
+        torch.full_like(scaled_square, info.min),
     )
 
 
@@ -57,7 +57,7 @@ def log_quartic(distances: Tensor, bandwidth: Tensor) -> Tensor:
     return torch.where(
         inside,
         2.0 * torch.log1p(-torch.where(inside, scaled_square, 0.0)),
-        torch.full_like(scaled_square, info.min / 2),
+        torch.full_like(scaled_square, info.min),
     )
 
 
@@ -71,5 +71,5 @@ def log_triweight(distances: Tensor, bandwidth: Tensor) -> Tensor:
     return torch.where(
         inside,
         3.0 * torch.log1p(-torch.where(inside, scaled_square, 0.0)),
-        torch.full_like(scaled_square, info.min / 2),
+        torch.full_like(scaled_square, info.min),
     )
