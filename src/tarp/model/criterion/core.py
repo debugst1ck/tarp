@@ -9,9 +9,10 @@ class Criterion(nn.Module):
         self.reduction: Literal["mean", "sum", "none"] = reduction
 
     def _apply_reduction(self, loss: Tensor) -> Tensor:
-        if self.reduction == "mean":
-            return loss.mean()
-        elif self.reduction == "sum":
-            return loss.sum()
-        else:
-            return loss
+        match self.reduction:
+            case "none":
+                return loss
+            case "mean":
+                return loss.mean()
+            case "sum":
+                return loss.sum()

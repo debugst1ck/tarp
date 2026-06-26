@@ -4,7 +4,7 @@ import torch
 from tarp.model.layers.pooling.learned import (
     LearnedPositionPooling,
     MultiHeadGatedSelfAttentionPooling,
-    SelfAttentionPooling,
+    SelfAttentionPooling1D,
 )
 
 
@@ -12,7 +12,7 @@ from tarp.model.layers.pooling.learned import (
     "module_class, kwargs",
     [
         (LearnedPositionPooling, {"maximum_sequence_length": 10}),
-        (SelfAttentionPooling, {"feature_dimension": 32}),
+        (SelfAttentionPooling1D, {"feature_dimension": 32}),
         (
             MultiHeadGatedSelfAttentionPooling,
             {"feature_dimension": 32, "number_of_heads": 4},
@@ -42,7 +42,7 @@ def test_pooling_modules_forward_and_shapes(module_class, kwargs):
     "module_class, kwargs",
     [
         (LearnedPositionPooling, {"maximum_sequence_length": 10}),
-        (SelfAttentionPooling, {"feature_dimension": 32}),
+        (SelfAttentionPooling1D, {"feature_dimension": 32}),
         (
             MultiHeadGatedSelfAttentionPooling,
             {"feature_dimension": 32, "number_of_heads": 4},
@@ -72,7 +72,7 @@ def test_pooling_attention_masking(module_class, kwargs):
     "module_class, kwargs",
     [
         (LearnedPositionPooling, {"maximum_sequence_length": 10}),
-        (SelfAttentionPooling, {"feature_dimension": 32}),
+        (SelfAttentionPooling1D, {"feature_dimension": 32}),
         (
             MultiHeadGatedSelfAttentionPooling,
             {"feature_dimension": 32, "number_of_heads": 4},

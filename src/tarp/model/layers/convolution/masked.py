@@ -1,10 +1,13 @@
-from typing import override
+from typing import final, override
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
+from tarp.model.layers.convolution.separable import DepthwiseSeparableConvolution1D
 
+
+@final
 class DensityNormalizedConvolution1D(nn.Module):
     def __init__(
         self,
@@ -15,13 +18,13 @@ class DensityNormalizedConvolution1D(nn.Module):
         padding: int = 0,
         dilation: int = 1,
         groups: int = 1,
-        bias: bool = True,
+        bias: bool = False,
     ) -> None:
         super().__init__()
-        self.feature_convolution = nn.Conv1d(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            kernel_size=kernel_size,
+        self.feature_convolution = DepthwiseSeparableConvolution1D(
+            in_channels,
+            out_channels,
+            kernel_size,
             stride=stride,
             padding=padding,
             dilation=dilation,
@@ -37,27 +40,28 @@ class DensityNormalizedConvolution1D(nn.Module):
     def forward(self, features: Tensor, mask: Tensor) -> Tensor:
         """
         :param Tensor features: Shape [B, C_in, L_in]
-        :param Tensor mask: Shape [B, C_in, L_in] or [B, 1, L_in] where values are 0 for masked positions and 1 for valid positions
+        :param Tensor mask: Shape [B, 1, L_in] where values are 0 for masked positions and 1 for valid positions
         :return Tensor: Tensor of shape [B, C_out, L_out]
         """
-        mask = mask.to(dtype=features.dtype)  # [B, C_in, L_in]
-        masked_features = features * mask  # [B, C_in, L_in]
-        spatial_mask = mask.sum(dim=1, keepdim=True)  # [B, 1, L_in]
-        ones_weight = torch.ones(
-            (1, 1, self.kernel_size),
-            dtype=features.dtype,
-            device=features.device,
-        )  # [1, 1, kernel_size]
-        feature_density = F.conv1d(
-            spatial_mask,
-            weight=ones_weight,
-            bias=None,
+        mask = mask.to(dtype=features.dtype)
+        masked_features = features * mask
+
+        density = F.conv1d(
+            mask,
+            weight=torch.ones(
+                1,
+                1,
+                self.kernel_size,
+                dtype=features.dtype,
+                device=features.device,
+            ),
             stride=self.stride,
             padding=self.padding,
             dilation=self.dilation,
-        ).clamp_min(1.0)  # [B, 1, L_out]
-        output = self.feature_convolution(masked_features)  # [B, C_out, L_out]
-        normalization_factor = feature_density / (
-            self.kernel_size * mask.size(1)
-        )  # [B, 1, L_out]
-        return output / (normalization_factor)  # [B, C_out, L_out]
+        ).clamp_min(1.0)
+
+        valid_fraction = density / self.kernel_size
+
+        output = self.feature_convolution(masked_features)
+        output = output / valid_fraction
+        return output

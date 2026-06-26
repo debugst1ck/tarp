@@ -5,6 +5,8 @@ import torch
 from torch import Tensor, nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
+from torchmetrics import Metric
+from torchmetrics.text import Perplexity
 
 from tarp.data.datasets.language.masked import MaskedLanguageDataset
 from tarp.model.tasks.language import LanguageModel
@@ -26,6 +28,7 @@ class MaskedLanguageModelTrainer(Trainer[LanguageModel, LanguageBatch, Tensor, T
         scheduler: LRScheduler | None = None,
         batch_size: int = 32,
         epochs: int = 10,
+        metrics: Sequence[Metric] = (Perplexity(ignore_index=-100),),
         gradient_clipping_threshold: float = 1.0,
         worker_count: int = 0,
         mixed_precision: bool = True,
@@ -43,6 +46,7 @@ class MaskedLanguageModelTrainer(Trainer[LanguageModel, LanguageBatch, Tensor, T
             scheduler,
             batch_size,
             epochs,
+            metrics,
             gradient_clipping_threshold,
             worker_count,
             mixed_precision,
@@ -66,8 +70,6 @@ class MaskedLanguageModelTrainer(Trainer[LanguageModel, LanguageBatch, Tensor, T
             self.context.device, non_blocking=True
         )
         truth = batch["truth"].to(self.context.device, non_blocking=True)
-
-        # For pure payload it is (truth != -100) & attention_mask.bool()
 
         scores, auxillary = self.context.model(sequence, attention_mask=attention_mask)
 
@@ -97,26 +99,3 @@ class MaskedLanguageModelTrainer(Trainer[LanguageModel, LanguageBatch, Tensor, T
             loss += auxillary
 
         return loss, scores.detach().cpu(), truth.detach().cpu()
-
-    @override
-    def compute_metrics(
-        self, predictions: Sequence[Tensor], targets: Sequence[Tensor], top_k: int = 2
-    ) -> dict[str, float]:
-        correct = 0
-        total = 0
-        top_k_correct = 0
-        for scores, truth in zip(predictions, targets):
-            mask = truth != -100
-            if mask.sum() == 0:
-                continue
-            prediction = scores.argmax(dim=-1)[mask]
-            top_k_prediction = scores.topk(top_k, dim=-1).indices[mask]
-
-            correct += (prediction == truth[mask]).sum().item()
-            total += mask.sum().item()
-            top_k_correct += (
-                (top_k_prediction == truth[mask].unsqueeze(-1)).any(dim=-1).sum().item()
-            )
-        accuracy = correct / total if total > 0 else 0.0
-        top_k_accuracy = top_k_correct / total if total > 0 else 0.0
-        return {"accuracy": accuracy, f"top_{top_k}_accuracy": top_k_accuracy}

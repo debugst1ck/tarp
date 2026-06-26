@@ -196,12 +196,16 @@ class GenomeSliceSource(SequenceDataSource[RowT]):
         if start_column and start_column not in self.metadata.columns:
             raise ValueError(f"Start column '{start_column}' not found in metadata.")
 
-        self._genome_files = {p.stem: p for p in self.genomes_directory.glob("*.fasta")}
-
     @property
     @override
     def height(self) -> int:
         return self.metadata.height
+
+    def _get_genome_path(self, key: str) -> Path:
+        path = self.genomes_directory / f"{key}.fasta"
+        if not path.is_file():
+            raise ValueError(f"Genome file for key '{key}' not found at {path}.")
+        return path
 
     def _load_sequence_uncached(self, key: str) -> str:
         """
@@ -210,7 +214,7 @@ class GenomeSliceSource(SequenceDataSource[RowT]):
         :param str key: The key corresponding to the FASTA file.
         :return str: The full genome sequence as a string.
         """
-        genome_source = self._genome_files.get(key)
+        genome_source = self._get_genome_path(key)
 
         if not genome_source:
             raise ValueError(f"Genome file for key '{key}' not found.")
@@ -219,7 +223,7 @@ class GenomeSliceSource(SequenceDataSource[RowT]):
             rec = next(SeqIO.parse(handle, "fasta"))
             return str(rec.seq)
 
-    @lru_cache(maxsize=1024)
+    @lru_cache(maxsize=32)
     def _load_sequence(self, key: str) -> str:
         return self._load_sequence_uncached(key)
 
@@ -230,14 +234,11 @@ class GenomeSliceSource(SequenceDataSource[RowT]):
         start = int(row[self.start_column]) if self.start_column else None
         end = int(row[self.end_column]) if self.end_column else None
 
-        if key not in self._genome_files:
-            raise ValueError(f"Genome file for key '{key}' not found.")
-
         full_sequence = self._load_sequence(key)
 
         if start is None or end is None:
             sequence = full_sequence
         else:
-            sequence = full_sequence[start:end]
+            sequence = full_sequence[start : end + 1]
 
         return cast(RowT, {**row, self.sequence_column: sequence})

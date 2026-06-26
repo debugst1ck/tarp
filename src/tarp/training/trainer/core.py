@@ -7,6 +7,7 @@ from torch import Tensor
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
+from torchmetrics import Metric
 
 from tarp.cli.core import Console
 from tarp.data.datasets.core import SequenceDataset
@@ -33,6 +34,7 @@ class Trainer(ABC, Generic[ModelT, BatchT, PredictionT, TargetT]):
         scheduler: LRScheduler | None = None,
         batch_size: int = 32,
         epochs: int = 10,
+        metrics: Sequence[Metric] = (),
         gradient_clipping_threshold: float = 1.0,
         worker_count: int = 0,
         mixed_precision: bool = True,
@@ -101,6 +103,7 @@ class Trainer(ABC, Generic[ModelT, BatchT, PredictionT, TargetT]):
         self.training_loop = TrainingLoop(
             context=self.context,
             forward=self.training_forward,
+            metrics=metrics,
             backpropagation=self.backpropagation,
             optimization=self.optimization,
             callbacks=self.callbacks,
@@ -108,7 +111,7 @@ class Trainer(ABC, Generic[ModelT, BatchT, PredictionT, TargetT]):
         self.validation_loop = ValidationLoop(
             context=self.context,
             forward=self.validation_forward,
-            evaluation=self.compute_metrics,
+            metrics=metrics,
             callbacks=self.callbacks,
         )
 
@@ -143,11 +146,6 @@ class Trainer(ABC, Generic[ModelT, BatchT, PredictionT, TargetT]):
         """
         raise NotImplementedError
 
-    def compute_metrics(
-        self, predictions: Sequence[PredictionT], targets: Sequence[TargetT]
-    ) -> dict[str, float]:
-        return {}
-
     def backpropagation(self, loss: Tensor) -> None:
         if self.context.scaler is not None:
             self.context.scaler.scale(loss).backward()
@@ -176,7 +174,6 @@ class Trainer(ABC, Generic[ModelT, BatchT, PredictionT, TargetT]):
         else:
             self.context.optimizer.step()
             stepped = True
-
         self.context.optimizer.zero_grad(set_to_none=True)
         return stepped
 

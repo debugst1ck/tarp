@@ -7,7 +7,7 @@ from tarp.preprocessing.tokenizers.core import Tokenizer
 
 
 @final
-class ESM1bTokenizer(Tokenizer):
+class Esm1bTokenizer(Tokenizer):
     def __init__(self, name="facebook/esm1b_t33_650M_UR50S"):
         self.tokenizer = AutoTokenizer.from_pretrained(name, trust_remote_code=True)
 

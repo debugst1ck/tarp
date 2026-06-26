@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 
 
-class SelfAttentionPooling(nn.Module):
+class SelfAttentionPooling1D(nn.Module):
     """
     Content-dependent single-query attention pooling.
 

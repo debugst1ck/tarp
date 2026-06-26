@@ -1,14 +1,13 @@
-from typing import override
+from typing import final, override
 
 from torch import Tensor, nn
 
 from tarp.model.backbone.core import Encoder
 
 
+@final
 class ClassificationModel(nn.Module):
-    def __init__(
-        self, embedding: nn.Embedding, encoder: Encoder, number_of_classes: int
-    ):
+    def __init__(self, embedding: nn.Module, encoder: Encoder, number_of_classes: int):
         super().__init__()
         self.encoder = encoder
         self.embedding = embedding
@@ -25,11 +24,11 @@ class ClassificationModel(nn.Module):
         *,
         positions: Tensor | None = None,
     ) -> tuple[Tensor, Tensor | None]:
-        sequence_embeddings = self.embedding(sequence)
-        pooled, auxillary_loss = self.encoder(
+        sequence_embeddings = self.embedding(sequence)  # [B, L, D]
+        pooled, auxiliary_loss = self.encoder(
             sequence_embeddings,
             attention_mask,
             positions=positions,
             mode="pooled",
-        )
-        return self.classification_head(pooled), auxillary_loss
+        )  # [B, D]
+        return self.classification_head(pooled), auxiliary_loss  # [B, C]

@@ -7,9 +7,11 @@ from tarp.preprocessing.tokenizers.core import Tokenizer
 
 
 @final
-class DnaBert2Tokenizer(Tokenizer):
-    def __init__(self, name: str = "zhihan1996/DNABERT-2-117M"):
-        self.tokenizer = AutoTokenizer.from_pretrained(name, trust_remote_code=True)
+class GenomeOceanTokenizer(Tokenizer):
+    def __init__(self, name: str = "DOEJGI/GenomeOcean-100M"):
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            name, trust_remote_code=True, padding_side="left"
+        )
 
     @override
     def encode(self, text: str) -> Tensor:
@@ -27,14 +29,14 @@ class DnaBert2Tokenizer(Tokenizer):
     @property
     @override
     def pad_token_id(self) -> int:
-        return 3
+        return self.tokenizer.pad_token_id
 
     @property
     @override
     def mask_token_id(self) -> int:
-        return 4
+        return self.tokenizer.mask_token_id
 
     @property
     @override
     def cls_token_id(self) -> int:
-        return 1
+        return self.tokenizer.cls_token_id

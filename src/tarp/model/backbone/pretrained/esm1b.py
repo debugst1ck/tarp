@@ -1,22 +1,24 @@
-from abc import ABC, abstractmethod
-from typing import Literal, Self, overload, override
+from typing import Literal, overload, override
 
-from torch import Tensor, nn
+from torch import Tensor
+from transformers import AutoModel
 
-
-class FrozenMixin(nn.Module, ABC):
-    def freeze(self) -> Self:
-        for param in self.parameters():
-            param.requires_grad = False
-        return self.eval()
-
-    def unfreeze(self) -> Self:
-        for param in self.parameters():
-            param.requires_grad = True
-        return self.train()
+from tarp.model.backbone.core import Encoder
+from tarp.model.layers.pooling.atomic import GlobalAveragePooling1D
 
 
-class Encoder(FrozenMixin, nn.Module, ABC):
+class Esm1bEncoder(Encoder):
+    def __init__(self, name: str = "facebook/esm1b_t33_650M_UR50S"):
+        super().__init__()
+        self.model = AutoModel.from_pretrained(name)
+        self.pooling = GlobalAveragePooling1D()
+        self.model_dimension = self.model.config.hidden_size
+
+    @property
+    @override
+    def encoding_size(self) -> int:
+        return self.model_dimension
+
     @overload
     def encode(
         self,
@@ -35,7 +37,7 @@ class Encoder(FrozenMixin, nn.Module, ABC):
         positions: Tensor | None = None,
         mode: Literal["both"],
     ) -> tuple[Tensor, Tensor, Tensor | None]: ...
-    @abstractmethod
+    @override
     def encode(
         self,
         sequence_embeddings: Tensor,
@@ -54,25 +56,18 @@ class Encoder(FrozenMixin, nn.Module, ABC):
             If mode is "pooled": (pooled_features, auxiliary_loss)
             If mode is "both": (sequence_features, pooled_features, auxiliary_loss)
         """
-        raise NotImplementedError
-
-    @property
-    @abstractmethod
-    def encoding_size(self) -> int:
-        raise NotImplementedError
-
-    @override
-    def forward(
-        self,
-        sequence_embeddings: Tensor,
-        attention_mask: Tensor,
-        *,
-        positions: Tensor | None = None,
-        mode: Literal["sequence", "pooled", "both"] = "sequence",
-    ) -> tuple[Tensor, Tensor | None] | tuple[Tensor, Tensor, Tensor | None]:
-        return self.encode(
-            sequence_embeddings,
-            attention_mask,
-            positions=positions,
-            mode=mode,
+        outputs = self.model(
+            input_ids=sequence_embeddings,
+            attention_mask=attention_mask,
+            output_hidden_states=False,
+            return_dict=True,
         )
+        hidden = outputs.last_hidden_state  # [B, L, D]
+        pooled = self.pooling(hidden, attention_mask)  # [B, D]
+        match mode:
+            case "sequence":
+                return hidden, None
+            case "pooled":
+                return pooled, None
+            case "both":
+                return hidden, pooled, None

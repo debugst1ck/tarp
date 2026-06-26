@@ -4,6 +4,7 @@ from typing import Generic
 
 from torch import Tensor
 from torch.utils.data import DataLoader
+from torchmetrics import Metric
 
 from tarp.training.callbacks.core import Callback
 from tarp.training.context import TrainerContext
@@ -18,9 +19,7 @@ class Loop(ABC, Generic[BatchT, PredictionT, TargetT]):
         forward: Callable[
             [BatchT, int], tuple[Tensor, PredictionT | None, TargetT | None]
         ],
-        evaluation: Callable[
-            [Sequence[PredictionT], Sequence[TargetT]], Mapping[str, float]
-        ] = lambda prediction, expected: {},
+        metrics: Sequence[Metric],
         backpropagation: Callable[[Tensor], None] = lambda loss: None,
         optimization: Callable[[], bool] = lambda: True,
         callbacks: Sequence[Callback] = (),
@@ -36,7 +35,7 @@ class Loop(ABC, Generic[BatchT, PredictionT, TargetT]):
         """
         self.context = context
         self.forward = forward
-        self.evaluation = evaluation
+        self.metrics = metrics
         self.backpropagation = backpropagation
         self.optimization = optimization
         self.callbacks = callbacks

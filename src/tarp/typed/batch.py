@@ -14,3 +14,8 @@ class ClassificationBatch(SequenceBatch):
 
 class LanguageBatch(SequenceBatch):
     truth: Tensor
+
+
+class DistillationBatch(TypedDict):
+    student: LanguageBatch
+    teacher: SequenceBatch

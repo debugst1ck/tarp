@@ -41,8 +41,10 @@ class ValidationLoop(Loop[BatchT, PredictionT, TargetT]):
     def run(self, epoch: int, dataloader: DataLoader[BatchT]) -> dict[str, float]:
         _ = self.context.model.eval()
         total_loss = 0.0
-        all_expected: list[TargetT] = []
-        all_predictions: list[PredictionT] = []
+
+        for metric in self.metrics:
+            metric.reset()
+
         loop: tqdm[BatchT] = tqdm(
             dataloader,
             desc=f"Validating [{epoch + 1}/{self.context.epochs}]",
@@ -54,18 +56,17 @@ class ValidationLoop(Loop[BatchT, PredictionT, TargetT]):
                 loss, predictions, expected = self.manual_step(
                     batch,
                     batch_index=step + (epoch * len(dataloader)),
-                    total_steps=len(dataloader),
+                    total_steps=len(dataloader) * self.context.epochs,
                 )
-                if predictions is not None:
-                    all_predictions.append(predictions)
-                if expected is not None:
-                    all_expected.append(expected)
+                if predictions is not None and expected is not None:
+                    for metric in self.metrics:
+                        metric.update(predictions.cpu(), expected.cpu())
                 total_loss += loss.item()
                 loop.set_postfix(loss=f"{loss.item():.4f}")
         average_loss = total_loss / len(dataloader)
-        with torch.no_grad():
-            metrics = self.evaluation(all_predictions, all_expected)
-        # Cast to dict to allow mutation
-        metrics = dict(metrics)
-        metrics["validation_loss"] = average_loss
-        return metrics
+
+        results = {"validation_loss": average_loss}
+        for metric in self.metrics:
+            metric_name = metric.__class__.__name__.lower()
+            results[metric_name] = metric.compute().detach().cpu().item()
+        return results

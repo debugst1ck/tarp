@@ -38,7 +38,6 @@ class TrainingLoop(Loop[BatchT, PredictionT, TargetT]):
         self, batch: BatchT, batch_index: int, total_steps: int
     ) -> tuple[Tensor, PredictionT | None, TargetT | None]:
         self._execute_callbacks(Callback.on_train_batch_start.__name__)
-        # Determine if we should optimize on this step
         accumulation_stop = (batch_index + 1) % self.context.accumulation_steps == 0
         is_last_step = (batch_index + 1) == total_steps
         optimize = accumulation_stop or is_last_step

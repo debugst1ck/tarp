@@ -55,10 +55,10 @@ class MultiHeadSelfAttentionWithPositionalEncoding(nn.Module):
         batch_size, sequence_length, _ = query.size()
 
         qkv: Tensor = self.qkv_projection(query)
-        qkv = qkv.view(
+        qkv = qkv.reshape(
             batch_size, sequence_length, 3, self.number_of_heads, self.head_dimension
         )
-        queries, keys, values = qkv.permute(2, 0, 3, 1, 4)  # [3, B, H, L, D_h]
+        queries, keys, values = qkv.permute(2, 0, 3, 1, 4).unbind(0)  # [B, H, L, D_h]
 
         positions = (
             positions
@@ -88,7 +88,7 @@ class MultiHeadSelfAttentionWithPositionalEncoding(nn.Module):
             dropout_p=self.dropout if self.training else 0.0,
         )  # [B, H, L, D_h]
 
-        attended = attended.transpose(1, 2).reshape(
+        attended = torch.einsum("bhld->blhd", attended).reshape(
             batch_size, sequence_length, self.model_dimension
         )  # [B, L, D]
 

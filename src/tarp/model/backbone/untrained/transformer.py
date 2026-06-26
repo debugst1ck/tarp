@@ -1,6 +1,5 @@
-import math
 from copy import deepcopy
-from typing import Literal, overload, override
+from typing import Literal, final, overload, override
 
 from torch import Tensor, nn
 
@@ -9,10 +8,11 @@ from tarp.model.layers.attention.multihead import (
     MultiHeadSelfAttentionWithPositionalEncoding,
 )
 from tarp.model.layers.perceptron.gated import SwishGatedLinearUnitFeedForward
-from tarp.model.layers.pooling.learned import SelfAttentionPooling
+from tarp.model.layers.pooling.atomic import GlobalAveragePooling1D
 from tarp.model.layers.positional.core import AttentionBiasPositionalEncoding
 
 
+@final
 class TransformerEncoderLayerWithPositionalEncoding(nn.Module):
     def __init__(
         self,
@@ -41,8 +41,6 @@ class TransformerEncoderLayerWithPositionalEncoding(nn.Module):
         self.feedforward_normalization = nn.RMSNorm(model_dimension)
         self.dropout = nn.Dropout(dropout)
 
-        self.scale = 1.0 / math.sqrt(2.0)
-
     @override
     def forward(
         self,
@@ -52,23 +50,21 @@ class TransformerEncoderLayerWithPositionalEncoding(nn.Module):
         positions: Tensor | None = None,
         is_causal: bool = False,
     ) -> Tensor:
-        features = (
-            features
-            + self.dropout(
-                self.self_attention(
-                    self.attention_normalization(features),
-                    attention_mask=attention_mask,
-                    positions=positions,
-                    is_causal=is_causal,
-                )
+        features = features + self.dropout(
+            self.self_attention(
+                self.attention_normalization(features),
+                attention_mask=attention_mask,
+                positions=positions,
+                is_causal=is_causal,
             )
-        ) * self.scale
+        )
         features = features + self.dropout(
             self.feed_forward(self.feedforward_normalization(features))
         )
         return features
 
 
+@final
 class TransformerEncoder(Encoder):
     def __init__(
         self,
@@ -96,7 +92,7 @@ class TransformerEncoder(Encoder):
             ]
         )
         self.normalization = nn.RMSNorm(model_dimension)
-        self.pooling = SelfAttentionPooling(feature_dimension=model_dimension)
+        self.pooling = GlobalAveragePooling1D()
 
     @overload
     def encode(
@@ -104,40 +100,27 @@ class TransformerEncoder(Encoder):
         sequence_embeddings: Tensor,
         attention_mask: Tensor,
         *,
-        payload_mask: Tensor | None = None,
         positions: Tensor | None = None,
-        mode: Literal["sequence"],
-    ) -> Tensor: ...
+        mode: Literal["sequence", "pooled"],
+    ) -> tuple[Tensor, Tensor | None]: ...
     @overload
     def encode(
         self,
         sequence_embeddings: Tensor,
         attention_mask: Tensor,
         *,
-        payload_mask: Tensor | None = None,
-        positions: Tensor | None = None,
-        mode: Literal["pooled"],
-    ) -> Tensor: ...
-    @overload
-    def encode(
-        self,
-        sequence_embeddings: Tensor,
-        attention_mask: Tensor,
-        *,
-        payload_mask: Tensor | None = None,
         positions: Tensor | None = None,
         mode: Literal["both"],
-    ) -> tuple[Tensor, Tensor]: ...
+    ) -> tuple[Tensor, Tensor, Tensor | None]: ...
     @override
     def encode(
         self,
         sequence_embeddings: Tensor,
         attention_mask: Tensor,
         *,
-        payload_mask: Tensor | None = None,
         positions: Tensor | None = None,
         mode: Literal["sequence", "pooled", "both"],
-    ) -> Tensor | tuple[Tensor, Tensor]:
+    ) -> tuple[Tensor, Tensor | None] | tuple[Tensor, Tensor, Tensor | None]:
         features = sequence_embeddings
         for layer in self.layers:
             features = layer(
@@ -147,17 +130,14 @@ class TransformerEncoder(Encoder):
                 is_causal=False,
             )
         features = self.normalization(features)
-
         match mode:
             case "sequence":
-                return features
+                return features, None
             case "pooled":
-                return self.pooling(features, attention_mask)
+                return self.pooling(features, attention_mask), None
             case "both":
-                pooled_features = self.pooling(
-                    features, attention_mask, return_attention=False
-                )
-                return features, pooled_features
+                pooled_features = self.pooling(features, attention_mask)
+                return features, pooled_features, None
 
     @property
     @override

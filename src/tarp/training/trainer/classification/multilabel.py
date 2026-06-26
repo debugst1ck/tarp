@@ -5,15 +5,9 @@ import torch
 from torch import Tensor, nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
+from torchmetrics import Metric
 
 from tarp.data.datasets.classification.multilabel import MultiLabelClassificationDataset
-from tarp.functional.statistics.classification import (
-    accuracy,
-    macro_f1_score,
-    precision,
-    recall,
-    top_k_accuracy,
-)
 from tarp.model.tasks.classification import ClassificationModel
 from tarp.training.callbacks.core import Callback
 from tarp.training.trainer.core import Trainer
@@ -34,6 +28,7 @@ class MultiLabelClassificationTrainer(
         scheduler: LRScheduler | None = None,
         batch_size: int = 32,
         epochs: int = 10,
+        metrics: Sequence[Metric] = (),
         gradient_clipping_threshold: float = 1.0,
         worker_count: int = 0,
         mixed_precision: bool = True,
@@ -51,6 +46,7 @@ class MultiLabelClassificationTrainer(
             scheduler,
             batch_size,
             epochs,
+            metrics,
             gradient_clipping_threshold,
             worker_count,
             mixed_precision,
@@ -68,9 +64,7 @@ class MultiLabelClassificationTrainer(
         inputs = batch["sequence"].to(self.context.device)
         labels = batch["labels"].to(self.context.device)
         attention_mask = batch["attention_mask"].to(self.context.device)
-        scores, auxillary = self.context.model.forward(
-            inputs, attention_mask=attention_mask
-        )
+        scores, auxillary = self.context.model(inputs, attention_mask=attention_mask)
         loss = self.criterion(scores, labels)
         if auxillary is not None:
             loss = loss + self.criterion(auxillary, labels)
@@ -83,30 +77,8 @@ class MultiLabelClassificationTrainer(
         inputs = batch["sequence"].to(self.context.device)
         labels = batch["labels"].to(self.context.device)
         attention_mask = batch["attention_mask"].to(self.context.device)
-        scores, auxillary = self.context.model.forward(
-            inputs, attention_mask=attention_mask
-        )
+        scores, auxillary = self.context.model(inputs, attention_mask=attention_mask)
         loss = self.criterion(scores, labels)
         if auxillary is not None:
             loss = loss + self.criterion(auxillary, labels)
         return loss, scores.detach().cpu(), labels.detach().cpu()
-
-    @override
-    def compute_metrics(
-        self, predictions: Sequence[Tensor], targets: Sequence[Tensor], top_k: int = 2
-    ) -> dict[str, float]:
-        predictions_t = torch.cat(list(predictions), dim=0)
-        targets_t = torch.cat(list(targets), dim=0)
-
-        # Threshold based metrics say 0.5
-        threshold = 0.5
-        binary_predictions = (predictions_t >= threshold).float()
-        binary_targets = targets_t.float()
-
-        return {
-            "accuracy": accuracy(binary_predictions, binary_targets).item(),
-            "precision": precision(binary_predictions, binary_targets).item(),
-            "recall": recall(binary_predictions, binary_targets).item(),
-            "f1_score": macro_f1_score(binary_predictions, binary_targets).item(),
-            "top_k_accuracy": top_k_accuracy(predictions_t, targets_t, k=top_k).item(),
-        }

@@ -4,7 +4,7 @@ from typing import NamedTuple, final, override
 import torch
 from torch import Tensor, nn
 
-from tarp.functional.kernels.log import log_quartic
+from tarp.functional.kernels.log import log_gaussian
 
 
 class ElasticOptimalTransportPerceiverOutput(NamedTuple):
@@ -28,8 +28,7 @@ class ElasticOptimalTransportPerceiver(nn.Module):
         iterations: int = 6,
         bias: bool = False,
         dropout: float = 0.1,
-        hidden_dimension: int | None = None,
-        kernel_function: Callable[[Tensor, Tensor], Tensor] = log_quartic,
+        kernel_function: Callable[[Tensor, Tensor], Tensor] = log_gaussian,
     ):
         super().__init__()
         self.model_dimension = model_dimension
@@ -39,16 +38,10 @@ class ElasticOptimalTransportPerceiver(nn.Module):
         self.iterations = iterations
         self.dropout = dropout
         self.window_width = 2 * window_radius + 1
-        self.hidden_dimension = hidden_dimension or model_dimension
         self.kernel_function = kernel_function
 
         # For drift and bandwidth hyperparameters
-        self.hyperparameter_projection = nn.Sequential(
-            nn.Linear(model_dimension, self.hidden_dimension, bias=bias),
-            nn.SiLU(),
-            nn.Dropout(self.dropout),
-            nn.Linear(self.hidden_dimension, 2, bias=bias),
-        )
+        self.hyperparameter_projection = nn.Linear(self.model_dimension, 2, bias=bias)
 
     @override
     def forward(
@@ -106,17 +99,19 @@ class ElasticOptimalTransportPerceiver(nn.Module):
 
         distance_to_window = window_indices - source_coordinates  # [B, L, W]
 
-        log_transport_cost = (
-            self.kernel_function(distance_to_window, bandwidths)
-        ).masked_fill(~boundary_mask, negative_infinity)  # [B, L, W]
+        log_transport_cost = self.kernel_function(distance_to_window, bandwidths)
 
         routing_mask = boundary_mask.to(dtype) * attention_mask.unsqueeze(
             -1
         )  # [B, L, W]
 
+        transport_mask = routing_mask.bool() & (
+            log_transport_cost > negative_infinity
+        )  # [B, L, W]
+
         log_potentials = (log_transport_cost / self.temperature).masked_fill(
             ~routing_mask.bool(), negative_infinity
-        )  # [B, L, W]
+        )
 
         log_sink_budgets = (content_lengths / latent_lengths).log()  # [B, 1]
 
@@ -182,7 +177,7 @@ class ElasticOptimalTransportPerceiver(nn.Module):
                 batch_indices, window_indices
             ]  # [B, L, W]
             shifted_log_mass = (window_potentials - gathered_sink_maximum).masked_fill(
-                ~routing_mask.bool(), negative_infinity
+                ~transport_mask, negative_infinity
             )
             shifted_mass = shifted_log_mass.exp()
             aggregated_mass = torch.zeros_like(sink_dual_potentials).scatter_add_(
@@ -193,7 +188,6 @@ class ElasticOptimalTransportPerceiver(nn.Module):
             log_sink_marginal = (
                 aggregated_mass.clamp_min(epsilon).log() + sink_maximum
             )  # [B, T]
-
             sink_dual_potentials += torch.where(
                 (aggregated_mass > 0) & latent_capacity_mask,
                 log_sink_budgets - log_sink_marginal,
@@ -215,7 +209,7 @@ class ElasticOptimalTransportPerceiver(nn.Module):
 
         log_transport_plan = (
             source_dual_potentials + log_potentials + windowed_sink_potentials
-        ).masked_fill(~routing_mask.bool(), negative_infinity)  # [B, L, W]
+        ).masked_fill(~transport_mask, negative_infinity)  # [B, L, W]
 
         transport_plan = log_transport_plan.exp()  # [B, L, W]
 
@@ -239,7 +233,7 @@ class ElasticOptimalTransportPerceiver(nn.Module):
             transport_plan.reshape(batch_size, -1),
         )
 
-        latent_tokens = latent_features / latent_density.unsqueeze(-1).clamp_min(
+        latent_anchor = latent_features / latent_density.unsqueeze(-1).clamp_min(
             epsilon
         )
 
@@ -256,7 +250,7 @@ class ElasticOptimalTransportPerceiver(nn.Module):
         )
 
         return ElasticOptimalTransportPerceiverOutput(
-            latent_tokens=latent_tokens,
+            latent_tokens=latent_anchor,
             latent_mask=latent_mask,
             latent_positions=latent_positions,
             latent_density=latent_density,

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import override
+from typing import final, override
 
 from torch import Tensor, nn
 
@@ -67,3 +67,20 @@ class HeterogeneousTransformativePositionalEncoding(AttentionBiasPositionalEncod
         encoded_query = self.query_encoder(query, query_positions)
         encoded_key = self.key_encoder(key, key_positions)
         return encoded_query, encoded_key, None
+
+
+@final
+class NoPositionalEncoding(AttentionBiasPositionalEncoding):
+    def __init__(self):
+        super().__init__()
+
+    @override
+    def forward(
+        self,
+        query: Tensor,
+        key: Tensor,
+        *,
+        query_positions: Tensor,
+        key_positions: Tensor,
+    ) -> tuple[Tensor, Tensor, Tensor | None]:
+        return query, key, None

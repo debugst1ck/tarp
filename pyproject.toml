@@ -9,42 +9,48 @@ keywords = ["antimicrobial resistance", "deep learning", "bioinformatics", "mach
 requires-python = ">=3.12"
 
 dependencies = [
-    "polars",       # Data manipulation
-    "numpy",        # Numerical operations
-    "scikit-learn", # Machine learning utilities
-    "torch",        # Deep learning
-    "transformers", # Pre-trained models and tokenizers
-    "tokenizers",   # Efficient tokenization
-    "tqdm",         # Progress bars
-    "plotly",       # Interactive visualizations
-    "pyarrow",      # Efficient data storage and retrieval
-    "scipy",        # Scientific computing
-    "biopython",    # Biological sequence handling
-    "safetensors",  # Safe and efficient model storage
+    "polars",                   # Data manipulation
+    "numpy",                    # Numerical operations
+    "scikit-learn",             # Machine learning utilities
+    "torch",                    # Deep learning
+    "transformers",             # Pre-trained models and tokenizers
+    "tokenizers",               # Efficient tokenization
+    "tqdm",                     # Progress bars
+    "plotly",                   # Interactive visualizations
+    "pyarrow",                  # Efficient data storage and retrieval
+    "scipy",                    # Scientific computing
+    "biopython",                # Biological sequence handling
+    "safetensors",              # Safe and efficient model storage
+    "torchmetrics",             # PyTorch utilities and metrics
+    "iterative-stratification", # Multilabel classification utilities
+    "xgboost",                  # Quick classification
+    "umap-learn",               # Embedding visualization
 ]
 
 [project.scripts]
 tarp = "tarp.app:main"
-train = "tarp.entry.train:main"
+
+[tool.uv]
+package = true
 
 [project.urls]
 Repository = "https://github.com/debugst1ck/TARP"
 Issues = "https://github.com/debugst1ck/TARP/issues"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-exclude = ["temp*", "tests*"]
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
 
-[project.optional-dependencies]
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[dependency-groups]
 dev = ["ruff", "pytest", "umap-learn"]
-docs = ["sphinx", "sphinx-rtd-theme", "sphinx-autodoc-typehints", "myst-parser"]
 jupyter = ["ipykernel", "nbformat", "ipywidgets"]
 plmarg = ["xgboost"]
-orfpred = ["orfipy"]
-
-[build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
 
 [tool.ruff]
 line-length = 88
@@ -60,8 +66,15 @@ quote-style = "double"
 # Pytest in the tests/ directory and subdirectories
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--maxfail=5 --disable-warnings -q"
+addopts = "--maxfail=5"
 
-[tool.pyright]
-reportPrivateImportUsage = false
+[tool.basedpyright]
 reportMissingTypeStubs = false
+exclude = [
+    ".git",
+    "__pycache__/",
+    "*.egg-info/",
+    "*.py[cod]",
+    ".venv",
+    "temp/data/external/sequences/",
+]
