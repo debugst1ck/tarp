@@ -4,6 +4,7 @@ from typing import cast
 import numpy as np
 import polars as pl
 import torch
+from sklearn.metrics import classification_report
 from tqdm.auto import tqdm
 from xgboost import XGBClassifier
 
@@ -22,9 +23,11 @@ def main():
     tokenizer = Esm1bTokenizer()
     encoder = Esm1bEncoder().freeze().to(device)  # Freeze the encoder weights
 
-    label_columns = (
-        pl.read_csv(Path("temp/data/cache/labels.csv")).to_series().to_list()
+    label_columns = cast(
+        list[str],
+        (pl.read_csv(Path("temp/data/cache/labels_reduced.csv")).to_series().to_list()),
     )
+    label_columns.remove("non_amr")
 
     classification_training_dataset = MultiLabelClassificationDataset(
         source=cast(
@@ -79,11 +82,10 @@ def main():
     print("Training XGBoost classifier...")
 
     classifier = XGBClassifier(
-        n_estimators=100,
-        max_depth=6,
+        n_estimators=200,
+        max_depth=7,
+        objective="binary:logistic",
         learning_rate=0.1,
-        subsample=0.8,
-        colsample_bytree=0.8,
     )
 
     classifier.fit(X_train, Y_train)
@@ -113,8 +115,6 @@ def main():
     Y_pred = classifier.predict(X_test)
 
     print("Classification report:")
-    from sklearn.metrics import classification_report
-
     print(classification_report(Y_test, Y_pred))
 
 
