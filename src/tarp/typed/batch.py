@@ -19,3 +19,7 @@ class LanguageBatch(SequenceBatch):
 class DistillationBatch(TypedDict):
     student: LanguageBatch
     teacher: SequenceBatch
+
+
+class DiffusionBatch(LanguageBatch):
+    timestep_weight: Tensor

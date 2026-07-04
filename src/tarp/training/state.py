@@ -1,4 +1,4 @@
-from typing import Generic
+from typing import Generic, final
 
 import torch
 from torch.optim import Optimizer
@@ -7,6 +7,7 @@ from torch.optim.lr_scheduler import LRScheduler
 from tarp.typed.training import ModelT
 
 
+@final
 class TrainerState(Generic[ModelT]):
     def __init__(
         self,

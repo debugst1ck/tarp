@@ -33,8 +33,31 @@ class MaskedLanguageDataset(SequenceDataset[dict[str, str], LanguageBatch]):
 
     def masking_positions(self, positions: Tensor) -> Tensor:
         target = int(round(self.masking_probability * positions.numel()))
+        if target == 0:
+            return torch.empty(0, dtype=torch.long, device=positions.device)
         selected = torch.randperm(positions.numel(), device=positions.device)[:target]
         return positions[selected]
+
+    def mask_sequence(self, sequence: Tensor, masking_positions: Tensor) -> Tensor:
+        random = torch.rand(masking_positions.shape, device=sequence.device)
+
+        # Replace 80% of the masked positions with the mask token
+        is_mask_token = random < 0.8
+        sequence[masking_positions[is_mask_token]] = self.tokenizer.mask_token_id
+
+        # Replace 10% of the masked positions with random tokens
+        is_random_token = (random >= 0.8) & (random < 0.9)
+        random_indices = masking_positions[is_random_token]
+        random_tokens = torch.randint_like(
+            random_indices,
+            low=0,
+            high=self.tokenizer.vocabulary_size,
+        )
+        sequence[random_indices] = random_tokens
+
+        # remaining 10% stay unchanged
+
+        return sequence
 
     @override
     def transform(self, index: int, row: dict[str, str]) -> LanguageBatch:
@@ -59,27 +82,8 @@ class MaskedLanguageDataset(SequenceDataset[dict[str, str], LanguageBatch]):
         masked_positions = self.masking_positions(valid_indices)
 
         if masked_positions.numel() > 0:
-            random = torch.rand(masked_positions.shape, device=sequence.device)
-
             truth[masked_positions] = sequence[masked_positions]
-
-            # Replace 80% of the masked positions with the mask token
-            is_mask_token = random < 0.8
-            sequence[masked_positions[is_mask_token]] = self.tokenizer.mask_token_id
-
-            # Replace 10% of the masked positions with random tokens
-            is_random_token = (random >= 0.8) & (random < 0.9)
-            random_indices = masked_positions[is_random_token]
-            random_tokens = torch.randint_like(
-                random_indices,
-                low=0,
-                high=self.tokenizer.vocabulary_size,
-            )
-            sequence[random_indices] = random_tokens
-
-            # remaining 10% stay unchanged
-
-            # Set the truth values for the masked positions
+            sequence = self.mask_sequence(sequence, masked_positions)
 
         return LanguageBatch(
             sequence=sequence,
@@ -124,92 +128,41 @@ class PoissonSpanMaskingDataset(MaskedLanguageDataset):
 
     @override
     def masking_positions(self, positions: Tensor) -> Tensor:
+        """Implements Span Masking protecting contiguity without destroying spans via random trim."""
         n = positions.numel()
-        if n == 0:
-            return positions
 
-        # Sample span lengths from a Poisson distribution for each position
-        # We'll sample more spans than we need and trim later
-        expected_spans = max(1, int(self.masking_probability * n / self.expected_span))
+        target_masks = int(round(self.masking_probability * n))
+        if target_masks == 0:
+            return torch.empty(0, dtype=torch.long, device=positions.device)
 
-        # Randomly choose span start indices (into the positions array)
-        start_indices = torch.randint(0, n, (expected_spans,), device=positions.device)
-
-        # Sample span lengths from Poisson distribution, minimum length of 1
-        span_lengths = (
-            torch.poisson(
-                torch.full(
-                    (expected_spans,), self.expected_span, device=positions.device
-                )
-            )
-            .long()
-            .clamp(min=1)
-        )
-
-        # Build a boolean mask over positions
         mask = torch.zeros(n, dtype=torch.bool, device=positions.device)
-        for start_idx, length in zip(start_indices.tolist(), span_lengths.tolist()):
-            end_idx = min(start_idx + length, n)
+        current_masks = 0
+
+        # Sample spans sequentially until budget fulfilled to maintain span contiguity
+        while current_masks < target_masks:
+            span_len = int(
+                torch.poisson(
+                    torch.tensor([self.expected_span], device=positions.device)
+                ).item()
+            )
+            if span_len < 1:
+                span_len = 1
+
+            if current_masks + span_len > target_masks:
+                span_len = target_masks - current_masks
+
+            start_idx = int(torch.randint(0, n, (1,)).item())
+            end_idx = min(start_idx + span_len, n)
+
+            # Count how many new tokens get masked
+            new_masks = (~mask[start_idx:end_idx]).sum().item()
             mask[start_idx:end_idx] = True
-
-        target = int(self.masking_probability * n)
-        masked_indices = mask.nonzero(as_tuple=True)[0]
-        current = masked_indices.numel()
-
-        if current > target:
-            # Trim excess
-            keep = masked_indices[
-                torch.randperm(current, device=positions.device)[:target]
-            ]
-            mask = torch.zeros(n, dtype=torch.bool, device=positions.device)
-            mask[keep] = True
-        elif current < target:
-            # Top up from unmasked positions
-            unmasked_indices = (~mask).nonzero(as_tuple=True)[0]
-            shortfall = target - current
-            if unmasked_indices.numel() >= shortfall:
-                extra = unmasked_indices[
-                    torch.randperm(unmasked_indices.numel(), device=positions.device)[
-                        :shortfall
-                    ]
-                ]
-                mask[extra] = True
+            current_masks += int(new_masks)
 
         return positions[mask]
 
-
-class CosineDiffusionMaskingDataset(PoissonSpanMaskingDataset):
-    def __init__(
-        self,
-        source: SequenceDataSource[dict[str, str]],
-        tokenizer: Tokenizer,
-        sequence_column: str,
-        augmentation: Augmentation | None = None,
-        minimum_masking=0.05,
-        maximum_masking=0.95,
-        maximum_sequence_length: int | None = 2048,
-    ):
-        super().__init__(
-            source=source,
-            tokenizer=tokenizer,
-            sequence_column=sequence_column,
-            augmentation=augmentation,
-            maximum_sequence_length=maximum_sequence_length,
-        )
-        self.minimum_masking = minimum_masking
-        self.maximum_masking = maximum_masking
-
     @override
-    def masking_positions(self, positions: Tensor) -> Tensor:
-        timestep = torch.rand(1, device=positions.device)
-        schedule = torch.cos(0.5 * torch.pi * timestep)
-        probability = self.minimum_masking + (
-            self.maximum_masking - self.minimum_masking
-        ) * (1.0 - schedule)
-        original_masking_probability = self.masking_probability
-
-        try:
-            self.masking_probability = probability.item()
-            return super().masking_positions(positions)
-        finally:
-            self.masking_probability = original_masking_probability
+    def mask_sequence(self, sequence: Tensor, masking_positions: Tensor) -> Tensor:
+        # In dLLM models, we typically replace all masked positions with [MASK] token
+        sequence[masking_positions] = self.tokenizer.mask_token_id
+        return sequence

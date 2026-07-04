@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from typing import Generic
+from typing import Generic, final
 
 import torch
 from torch.optim import Optimizer
@@ -9,6 +9,7 @@ from tarp.training.state import TrainerState
 from tarp.typed.training import ModelT
 
 
+@final
 class TrainerContext(Generic[ModelT]):
     def __init__(self, state: TrainerState[ModelT]):
         self.state = state

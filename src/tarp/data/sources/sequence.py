@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from functools import lru_cache
@@ -45,7 +47,7 @@ class SequenceDataSource(ABC, Generic[RowT]):
         """Internal helper to treat everything as a list of sources."""
         return [self]
 
-    def __add__(self, other: "SequenceDataSource[RowT]") -> "CombinationSource[RowT]":
+    def __add__(self, other: SequenceDataSource[RowT]) -> CombinationSource[RowT]:
         return CombinationSource([*self._get_sources(), *other._get_sources()])
 
 
@@ -65,7 +67,7 @@ class CombinationSource(SequenceDataSource[RowT]):
         return torch.cumsum(heights, dim=0)
 
     @override
-    def _get_sources(self) -> Sequence["SequenceDataSource[RowT]"]:
+    def _get_sources(self) -> Sequence[SequenceDataSource[RowT]]:
         return self.sources
 
     @property

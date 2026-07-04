@@ -59,10 +59,8 @@ class TrainingLoop(Loop[BatchT, PredictionT, TargetT]):
             colour="green",
         )
         for step, batch in enumerate(loop):
-            loss, _, _ = self.manual_step(
-                batch,
-                batch_index=step + (epoch * len(dataloader)),
-                total_steps=len(dataloader),
+            loss, predictions, expected = self.manual_step(
+                batch, batch_index=step, total_steps=len(dataloader)
             )
             total_loss += loss.item()
             loop.set_postfix(loss=f"{loss.item():.4f}")

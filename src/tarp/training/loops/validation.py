@@ -55,12 +55,14 @@ class ValidationLoop(Loop[BatchT, PredictionT, TargetT]):
             for step, batch in enumerate(loop):
                 loss, predictions, expected = self.manual_step(
                     batch,
-                    batch_index=step + (epoch * len(dataloader)),
-                    total_steps=len(dataloader) * self.context.epochs,
+                    batch_index=step,
+                    total_steps=len(dataloader),
                 )
                 if predictions is not None and expected is not None:
                     for metric in self.metrics:
-                        metric.update(predictions.cpu(), expected.cpu())
+                        metric.update(
+                            predictions.detach().cpu(), expected.detach().cpu()
+                        )
                 total_loss += loss.item()
                 loop.set_postfix(loss=f"{loss.item():.4f}")
         average_loss = total_loss / len(dataloader)

@@ -66,11 +66,11 @@ class RotaryPositionalEncoding(TransformativePositionalEncoding, ABC):
 
     def _rotate_half(self, features: Tensor) -> Tensor:
         half_dimension = features.shape[-1] // 2
-        first_half, seconDalf = (
+        first_half, second_half = (
             features[..., :half_dimension],
             features[..., half_dimension:],
         )  # [..., D/2], [..., D/2]
-        return torch.cat((-seconDalf, first_half), dim=-1)  # [..., D]
+        return torch.cat((-second_half, first_half), dim=-1)  # [..., D]
 
     def _apply_partial_rotary_embedding(
         self, features: Tensor, sine: Tensor, cosine: Tensor, rotary_dimension: int

@@ -65,7 +65,7 @@ class MultiHeadSelfAttentionWithPositionalEncoding(nn.Module):
             if positions is not None
             else torch.arange(sequence_length, device=query.device)
             .unsqueeze(0)
-            .repeat(batch_size, 1)
+            .expand(batch_size, sequence_length)
         )
 
         queries, keys, positional_attention_bias = self.positional_encoder(
@@ -84,7 +84,7 @@ class MultiHeadSelfAttentionWithPositionalEncoding(nn.Module):
             key=keys,
             value=values,
             attn_mask=attention_bias,
-            is_causal=is_causal if attention_bias is None else False,
+            is_causal=is_causal,
             dropout_p=self.dropout if self.training else 0.0,
         )  # [B, H, L, D_h]
 
