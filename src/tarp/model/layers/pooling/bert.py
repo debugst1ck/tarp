@@ -1,41 +1,20 @@
-# CLS pooling layer for BERT-like models
-#
-from typing import Optional, Union
+from typing import final, override
 
-import torch
 from torch import Tensor, nn
 
 
-class CLSPooling(nn.Module):
-    def __init__(self):
+@final
+class GlobalClassificationPooling1D(nn.Module):
+    def __init__(self, classification_token_index: int = 0):
         super().__init__()
+        self.classification_token_index = classification_token_index
 
-    def forward(
-        self,
-        input: Tensor,
-        attention_mask: Optional[Tensor] = None,
-        return_attention: bool = False,
-    ) -> Union[Tensor, tuple[Tensor, Tensor]]:
+    @override
+    def forward(self, features: Tensor, attention_mask: Tensor) -> Tensor:
         """
-        :param input: Tensor of shape (batch_size, sequence_length, feature_dimension)
-        :param attention_mask: Optional attention mask of shape (batch_size, sequence_length)
-        :param return_attention: Whether to return attention weights.
-        :return: Pooled tensor of shape (batch_size, feature_dimension), optionally with attention weights.
+        :param Tensor features: [B, L, D]
+        :param Tensor attention_mask: [B, L], 1 for valid positions, 0 for padding
+        :return:
+            pooled: [B, D]
         """
-        # Take the first token's embedding
-        pooled = input[:, 0, :]  # shape: (batch_size, feature_dimension)
-
-        if return_attention:
-            if attention_mask is not None:
-                attention_weights = attention_mask.float() / attention_mask.sum(
-                    dim=1, keepdim=True
-                )
-            else:
-                attention_weights = torch.full(
-                    (input.size(0), input.size(1)),
-                    1.0 / input.size(1),
-                    device=input.device,
-                )
-            return pooled, attention_weights
-
-        return pooled
+        return features[:, self.classification_token_index, :]

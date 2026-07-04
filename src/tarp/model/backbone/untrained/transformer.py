@@ -1,164 +1,145 @@
-# Transformer model for sequence classification
-from typing import Optional
+from copy import deepcopy
+from typing import Literal, final, overload, override
 
 from torch import Tensor, nn
 
-from tarp.model.backbone import Encoder
-from tarp.model.layers.attention.multihead.rotational import (
-    MultiHeadSelfAttentionWithRotaryPositionalEmbeddings,
+from tarp.model.backbone.core import Encoder
+from tarp.model.layers.attention.multihead import (
+    MultiHeadSelfAttentionWithPositionalEncoding,
 )
-from tarp.model.layers.pooling.learned import SelfAttentionPooling
+from tarp.model.layers.perceptron.gated import SwishGatedLinearUnitFeedForward
+from tarp.model.layers.pooling.atomic import GlobalAveragePooling1D
+from tarp.model.layers.positional.core import AttentionBiasPositionalEncoding
 
 
-class TransformerEncoderLayerWithRotaryPositionalEmbeddings(nn.Module):
+@final
+class TransformerEncoderLayerWithPositionalEncoding(nn.Module):
     def __init__(
         self,
-        number_of_heads: int,
         model_dimension: int,
-        feedforward_dimension: int,
+        number_of_heads: int,
+        feed_forward_dimension: int,
+        positional_encoder: AttentionBiasPositionalEncoding,
         dropout: float = 0.1,
-        activation: nn.Module = nn.ReLU(),
-        epsilon: float = 1e-5,
-        normalize_first: bool = False,
-        bias: bool = True,
-    ) -> None:
+        bias: bool = False,
+    ):
         super().__init__()
-        self.self_attention = MultiHeadSelfAttentionWithRotaryPositionalEmbeddings(
+        self.self_attention = MultiHeadSelfAttentionWithPositionalEncoding(
             model_dimension=model_dimension,
             number_of_heads=number_of_heads,
+            positional_encoder=positional_encoder,
             dropout=dropout,
+            bias=bias,
         )
-
-        self.feedforward_normalization = nn.LayerNorm(model_dimension, eps=epsilon)
-
-        self.feedforward = nn.Sequential(
-            nn.Linear(model_dimension, feedforward_dimension, bias=bias),
-            nn.Dropout(dropout),
-            activation,
-            nn.Linear(feedforward_dimension, model_dimension, bias=bias),
+        self.feed_forward = SwishGatedLinearUnitFeedForward(
+            input_dimension=model_dimension,
+            output_dimension=model_dimension,
+            hidden_dimension=feed_forward_dimension,
+            bias=bias,
         )
+        self.attention_normalization = nn.RMSNorm(model_dimension)
+        self.feedforward_normalization = nn.RMSNorm(model_dimension)
+        self.dropout = nn.Dropout(dropout)
 
-        self.attention_dropout = nn.Dropout(dropout)
-        self.attention_normalization = nn.LayerNorm(model_dimension, eps=epsilon)
-
-        self.activation = activation
-        self.normalize_first = normalize_first
-
-    def _self_attention_block(
-        self,
-        hidden_states: Tensor,
-        attention_mask: Optional[Tensor] = None,
-        is_causal: bool = False,
-    ) -> Tensor:
-        attention_output = self.self_attention(
-            query=hidden_states,
-            key=hidden_states,
-            value=hidden_states,
-            attention_mask=attention_mask,
-            is_causal=is_causal,
-        )
-        return self.attention_dropout(attention_output)
-
+    @override
     def forward(
         self,
-        hidden_states: Tensor,
-        attention_mask: Optional[Tensor] = None,
+        features: Tensor,
+        *,
+        attention_mask: Tensor | None = None,
+        positions: Tensor | None = None,
         is_causal: bool = False,
     ) -> Tensor:
-        if self.normalize_first:
-            # Attention block with residual
-            normalized_states = self.attention_normalization(hidden_states)
-            attention_output = self._self_attention_block(
-                normalized_states, attention_mask, is_causal
+        features = features + self.dropout(
+            self.self_attention(
+                self.attention_normalization(features),
+                attention_mask=attention_mask,
+                positions=positions,
+                is_causal=is_causal,
             )
-            hidden_states = hidden_states + attention_output
-
-            # Feedforward block with residual
-            normalized_states = self.feedforward_normalization(hidden_states)
-            feedforward_output = self.feedforward(normalized_states)
-            hidden_states = hidden_states + feedforward_output
-
-        # Post-norm architecture
-        else:
-            # Attention block with residual
-            attention_output = self._self_attention_block(
-                hidden_states, attention_mask, is_causal
-            )
-            hidden_states = hidden_states + attention_output
-            hidden_states = self.attention_normalization(hidden_states)
-
-            # Feedforward block with residual
-            feedforward_output = self.feedforward(hidden_states)
-            hidden_states = self.feedforward_normalization(
-                hidden_states + feedforward_output
-            )
-
-        return hidden_states
+        )
+        features = features + self.dropout(
+            self.feed_forward(self.feedforward_normalization(features))
+        )
+        return features
 
 
+@final
 class TransformerEncoder(Encoder):
     def __init__(
         self,
-        vocabulary_size: int,
-        embedding_dimension: int,
-        feedforward_dimension: int,
-        number_of_layers: int = 2,
-        number_of_heads: int = 4,
+        model_dimension: int,
+        number_of_heads: int,
+        feed_forward_dimension: int,
+        number_of_layers: int,
+        positional_encoder: AttentionBiasPositionalEncoding,
         dropout: float = 0.1,
-        padding_id: int = 0,
+        bias: bool = False,
     ):
         super().__init__()
-        self.embedding = nn.Embedding(
-            num_embeddings=vocabulary_size,
-            embedding_dim=embedding_dimension,
-            padding_idx=padding_id,
-        )
-        self.transformer_encoder = nn.ModuleList(
+        self.model_dimension = model_dimension
+        self.layers = nn.ModuleList(
             [
-                TransformerEncoderLayerWithRotaryPositionalEmbeddings(
-                    model_dimension=embedding_dimension,
+                TransformerEncoderLayerWithPositionalEncoding(
+                    model_dimension=model_dimension,
                     number_of_heads=number_of_heads,
-                    feedforward_dimension=feedforward_dimension,
+                    feed_forward_dimension=feed_forward_dimension,
+                    positional_encoder=deepcopy(positional_encoder),
                     dropout=dropout,
+                    bias=bias,
                 )
                 for _ in range(number_of_layers)
             ]
         )
+        self.normalization = nn.RMSNorm(model_dimension)
+        self.pooling = GlobalAveragePooling1D()
 
-        self.normalization = nn.LayerNorm(embedding_dimension)
-        self.dropout = nn.Dropout(dropout)
-        self.embedding_dimension = embedding_dimension
-        self.pooling = SelfAttentionPooling(embedding_dimension)
-        self.output_dimension = embedding_dimension
-
+    @overload
     def encode(
         self,
-        sequence: Tensor,
-        attention_mask: Optional[Tensor] = None,
-        return_sequence: bool = False,
-    ) -> Tensor:
-        embeddings = self.embedding(sequence)  # (B, L, D)
-
-        mask = None
-        if attention_mask is not None:
-            # attention_mask: (B, L) -> (B, 1, 1, L)
-            mask = attention_mask[:, None, None, :].bool()
-
-        encoded = embeddings
-        for layer in self.transformer_encoder:
-            encoded = layer(
-                hidden_states=encoded,
-                attention_mask=mask,
+        sequence_embeddings: Tensor,
+        attention_mask: Tensor,
+        *,
+        positions: Tensor | None = None,
+        mode: Literal["sequence", "pooled"],
+    ) -> tuple[Tensor, Tensor | None]: ...
+    @overload
+    def encode(
+        self,
+        sequence_embeddings: Tensor,
+        attention_mask: Tensor,
+        *,
+        positions: Tensor | None = None,
+        mode: Literal["both"],
+    ) -> tuple[Tensor, Tensor, Tensor | None]: ...
+    @override
+    def encode(
+        self,
+        sequence_embeddings: Tensor,
+        attention_mask: Tensor,
+        *,
+        positions: Tensor | None = None,
+        mode: Literal["sequence", "pooled", "both"],
+    ) -> tuple[Tensor, Tensor | None] | tuple[Tensor, Tensor, Tensor | None]:
+        features = sequence_embeddings
+        for layer in self.layers:
+            features = layer(
+                features,
+                attention_mask=attention_mask.unsqueeze(1).unsqueeze(2),
+                positions=positions,
                 is_causal=False,
             )
-
-        if return_sequence:
-            return self.dropout(self.normalization(encoded))
-        else:
-            return self.pooling(
-                self.dropout(self.normalization(encoded)), attention_mask
-            )
+        features = self.normalization(features)
+        match mode:
+            case "sequence":
+                return features, None
+            case "pooled":
+                return self.pooling(features, attention_mask), None
+            case "both":
+                pooled_features = self.pooling(features, attention_mask)
+                return features, pooled_features, None
 
     @property
+    @override
     def encoding_size(self) -> int:
-        return self.output_dimension
+        return self.model_dimension

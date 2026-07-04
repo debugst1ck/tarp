@@ -1,11 +1,11 @@
 # Python cache files pyc, pyo
 *.py[cod]
 
+# Environment files
+*.env
+
 # Temporary files
 temp/
-
-# Ignore dataset files
-data/
 
 # Ignore logs
 logs/
@@ -21,9 +21,11 @@ __pycache__/
 
 # All hidden directories and their contents
 .venv/
-.env/
 .idea/
 .vscode/
-.zed
+.zed/
 .cache/
 .pytest_cache/
+
+# Lock files
+*.lock
