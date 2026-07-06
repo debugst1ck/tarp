@@ -24,7 +24,6 @@ dependencies = [
     "torchmetrics",             # PyTorch utilities and metrics
     "iterative-stratification", # Multilabel classification utilities
     "xgboost",                  # Quick classification
-    "umap-learn",               # Embedding visualization
 ]
 
 [project.scripts]
@@ -48,7 +47,7 @@ torch = [
 ]
 
 [dependency-groups]
-dev = ["ruff", "pytest", "umap-learn"]
+dev = ["ruff", "pytest"]
 jupyter = ["ipykernel", "nbformat", "ipywidgets"]
 plmarg = ["xgboost"]
 
