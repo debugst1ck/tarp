@@ -1,57 +1,17 @@
 #!/bin/bash -l
 #PBS -N TARP
-#PBS -l select=1:ncpus=8:ngpus=1:mem=32gb:gpu_id=H100
-#PBS -l walltime=4:00:00
+#PBS -l select=1:ncpus=8:ngpus=1:mem=32gb
+#PBS -l walltime=24:00:00
 #PBS -m abe
 #PBS -j oe
-
-# H100 is used because A100 is broken with Python/3.12.3
-
-# Load necessary modules
-## GCCCore 14.2.0
-module load GCCcore/13.3.0
-## Python 3.13.1 # Does not work on HPC, H100, so reverting to 3.12.3
-module load Python/3.12.3
-## CUDA 12.8
-module load CUDA/12.8.0
 
 # Load the necessary environment
 cd $HOME/Mainframe/tarp
 
-if [ ! -d "./.venv" ]; then
-    # Create a virtual environment if it does not exist
-    python -m venv ./.venv
-    
-    # Activate the virtual environment
-    source ./.venv/bin/activate
-    
-    # Upgrade pip in the virtual environment
-    python -m pip install --upgrade pip
-    
-    # Install the required packages
-    pip install -e . --extra-index-url https://download.pytorch.org/whl/cu128
-    
-    # Uninstall triton as old versions cause issues
-    pip uninstall -y triton
-    
-    # Deactivate the virtual environment
-    deactivate
-    
-    echo "Virtual environment created and packages installed."
-else
-    echo "Virtual environment already exists."
-fi
-
-# Activate the virtual environment
-source ./.venv/bin/activate
-
 # Tell git to update the project to latest
-git pull origin main
+uv sync
 
 # Now run the script as pyproject.toml is configured to run it
-tarp
-
-# Deactivate the virtual environment
-deactivate
+uv run tarp
 
 echo "Job completed."

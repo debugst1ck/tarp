@@ -56,6 +56,10 @@ class TrainerContext(Generic[ModelT]):
         return self.state.mixed_precision
 
     @property
+    def is_distributed(self) -> bool:
+        return self.state.distributed
+
+    @property
     def gradient_clipping_threshold(self) -> float:
         return self.state.gradient_clipping_threshold
 

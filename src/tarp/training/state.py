@@ -18,6 +18,7 @@ class TrainerState(Generic[ModelT]):
         scaler: torch.amp.grad_scaler.GradScaler | None = None,
         epochs: int = 10,
         accumulation_steps: int = 1,
+        distributed: bool = False,
         mixed_precision: bool = True,
         gradient_clipping_threshold: float = 1.0,
         shared: dict[str, object] = {},
@@ -30,6 +31,7 @@ class TrainerState(Generic[ModelT]):
         self.history: list[dict[str, float]] = [{} for _ in range(epochs)]
         self.epochs = epochs
         self.accumulation_steps = accumulation_steps
+        self.distributed = distributed
         self.mixed_precision = mixed_precision
         self.gradient_clipping_threshold = gradient_clipping_threshold
         self.shared = shared

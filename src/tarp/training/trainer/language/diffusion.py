@@ -72,21 +72,12 @@ class DiffusionLanguageModelTrainer(
             self.context.device, non_blocking=True
         )
         truth = batch["truth"].to(self.context.device, non_blocking=True)
-        loss_weight = batch["timestep_weight"].to(
-            self.context.device, non_blocking=True
-        )
 
         scores, auxillary = self.context.model(sequence, attention_mask=attention_mask)
 
-        tokenwise_loss = self.criterion(
+        loss = self.criterion(
             scores.reshape(-1, self.vocabulary_size), truth.reshape(-1)
-        ).reshape(truth.shape)  # reshape back to (B, L)
-
-        masked = truth != -100  # (B, L)
-        token_counts = masked.sum(dim=1).clamp_min(1).float()  # (B,)
-        per_sample_loss = (tokenwise_loss * masked).sum(dim=1)  # (B,)
-        per_token_loss = per_sample_loss / token_counts  # (B,) - normalized
-        loss = (per_token_loss * loss_weight).mean()  # scalar
+        )
 
         if auxillary is not None:
             loss += auxillary
@@ -102,22 +93,10 @@ class DiffusionLanguageModelTrainer(
             self.context.device, non_blocking=True
         )
         truth = batch["truth"].to(self.context.device, non_blocking=True)
-        loss_weight = batch["timestep_weight"].to(
-            self.context.device, non_blocking=True
-        )
-
         scores, auxillary = self.context.model(sequence, attention_mask=attention_mask)
-
-        tokenwise_loss = self.criterion(
+        loss = self.criterion(
             scores.reshape(-1, self.vocabulary_size), truth.reshape(-1)
-        ).reshape(truth.shape)  # reshape back to (B, L)
-
-        masked = truth != -100  # (B, L)
-        token_counts = masked.sum(dim=1).clamp_min(1).float()  # (B,)
-        per_sample_loss = (tokenwise_loss * masked).sum(dim=1)  # (B,)
-        per_token_loss = per_sample_loss / token_counts  # (B,) - normalized
-        loss = (per_token_loss * loss_weight).mean()  # scalar
-
+        )
         if auxillary is not None:
             loss += auxillary
 

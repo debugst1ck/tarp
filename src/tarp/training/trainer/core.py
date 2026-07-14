@@ -1,12 +1,14 @@
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import Generic, Self
+from typing import Generic, Self, cast
 
 import torch
 from torch import Tensor
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from torchmetrics import Metric
 
 from tarp.cli.core import Console
@@ -37,6 +39,7 @@ class Trainer(ABC, Generic[ModelT, BatchT, PredictionT, TargetT]):
         metrics: Sequence[Metric] = (),
         gradient_clipping_threshold: float = 1.0,
         worker_count: int = 0,
+        distributed: bool = False,
         mixed_precision: bool = True,
         accumulation_steps: int = 1,
         persistent_workers: bool = True,
@@ -72,10 +75,22 @@ class Trainer(ABC, Generic[ModelT, BatchT, PredictionT, TargetT]):
                 epochs=epochs,
                 accumulation_steps=accumulation_steps,
                 mixed_precision=mixed_precision,
+                distributed=distributed,
                 gradient_clipping_threshold=gradient_clipping_threshold,
                 shared=shared if shared is not None else {},
             )
         )
+
+        self.rank = torch.distributed.get_rank() if distributed else 0
+
+        if self.context.is_distributed:
+            self.context.state.model = cast(
+                ModelT,
+                DDP(
+                    self.context.model,
+                    device_ids=[device.index] if device.type == "cuda" else None,
+                ),
+            )
 
         is_gpu = device.type == "cuda"
 
@@ -88,6 +103,7 @@ class Trainer(ABC, Generic[ModelT, BatchT, PredictionT, TargetT]):
             persistent_workers=is_gpu and persistent_workers,
             collate_fn=training_dataset.collate,
         )
+
         self.validation_dataloader = DataLoader(
             validation_dataset,
             batch_size=batch_size,

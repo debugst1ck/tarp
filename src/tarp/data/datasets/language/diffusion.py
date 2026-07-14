@@ -45,16 +45,9 @@ class CosineDiffusionMaskingDataset(SequenceDataset[dict[str, str], DiffusionBat
         timestep = torch.rand(())
 
         schedule = 1.0 - torch.cos(0.5 * torch.pi * timestep)
-        schedule_derivative = 0.5 * torch.pi * torch.sin(0.5 * torch.pi * timestep)
 
         span = self.masking_probability_maximum - self.masking_probability_minimum
         probability = self.masking_probability_minimum + (schedule * span)
-
-        probability_derivative = schedule_derivative * span
-
-        weight = probability_derivative / probability.clamp_min(
-            torch.finfo(probability.dtype).eps
-        )
 
         self.language_dataset.masking_probability = probability.item()
 
@@ -64,7 +57,7 @@ class CosineDiffusionMaskingDataset(SequenceDataset[dict[str, str], DiffusionBat
             sequence=language_batch["sequence"],
             attention_mask=language_batch["attention_mask"],
             truth=language_batch["truth"],
-            timestep_weight=weight,
+            timestep=timestep,
         )
 
     @override
@@ -79,13 +72,11 @@ class CosineDiffusionMaskingDataset(SequenceDataset[dict[str, str], DiffusionBat
             for batch_item in batch
         ]
         language_batch = self.language_dataset.collate(language_batches)
-        timesteps = torch.stack(
-            [batch_item["timestep_weight"] for batch_item in batch], dim=0
-        )
+        timesteps = torch.stack([batch_item["timestep"] for batch_item in batch], dim=0)
 
         return DiffusionBatch(
             sequence=language_batch["sequence"],
             attention_mask=language_batch["attention_mask"],
             truth=language_batch["truth"],
-            timestep_weight=timesteps,
+            timestep=timesteps,
         )

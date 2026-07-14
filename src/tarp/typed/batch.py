@@ -22,4 +22,4 @@ class DistillationBatch(TypedDict):
 
 
 class DiffusionBatch(LanguageBatch):
-    timestep_weight: Tensor
+    timestep: Tensor
