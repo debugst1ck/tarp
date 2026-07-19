@@ -3,10 +3,10 @@ from typing import override
 
 import torch
 from torch import Tensor
-from torch.nn.utils.rnn import pad_sequence
 
 from tarp.data.datasets.core import SequenceDataset
 from tarp.data.sources.sequence import SequenceDataSource
+from tarp.functional.padding.sequence import blocked_pad_sequence
 from tarp.preprocessing.augmentation.core import Augmentation
 from tarp.preprocessing.tokenizers.core import Tokenizer
 from tarp.typed.batch import LanguageBatch
@@ -97,7 +97,7 @@ class MaskedLanguageDataset(SequenceDataset[dict[str, str], LanguageBatch]):
             [item["sequence"] for item in batch],
             [item["attention_mask"] for item in batch],
         )
-        padded_truths = pad_sequence(
+        padded_truths = blocked_pad_sequence(
             [item["truth"] for item in batch], batch_first=True, padding_value=-100
         )
         return LanguageBatch(

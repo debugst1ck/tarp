@@ -1,37 +1,28 @@
 import math
 from pathlib import Path
+from typing import cast
 
-import polars as pl
 import torch
 from torch import nn
-from torchmetrics import Accuracy, F1Score, Precision, Recall
-from torchmetrics.text import Perplexity
 
 from tarp.cli.core import Console
-from tarp.data.datasets.classification.multilabel import MultiLabelClassificationDataset
 from tarp.data.datasets.language.diffusion import CosineDiffusionMaskingDataset
-from tarp.data.sources.sequence import GenomeSliceSource, TabularSequenceSource
-from tarp.evaluation.text.masked import MaskedLanguageAccuracy
+from tarp.data.sources.sequence import GenomeSliceSource
 from tarp.model.backbone.untrained.transformer import TransformerEncoder
-from tarp.model.layers.positional.core import (
-    HeterogeneousTransformativePositionalEncoding,
-)
 from tarp.model.layers.positional.rotational import (
-    CachedIntegerRotaryPositionalEncoding,
+    ContinuousRotaryPositionalEncoding,
 )
-from tarp.model.tasks.classification import ClassificationModel
 from tarp.model.tasks.language import LanguageModel
 from tarp.preprocessing.tokenizers.atomic.monomer import NucleotideTokenizer
-from tarp.training.trainer.classification.multilabel import (
-    MultiLabelClassificationTrainer,
-)
-from tarp.training.trainer.language.diffusion import DiffusionLanguageModelTrainer
+from tarp.training.engine.single import SingleDeviceEngine
+from tarp.training.objectives.language.masked import MaskedLanguageModelingObjective
+from tarp.training.orchestrator.core import Orchestrator
+from tarp.training.plugins.core import State
+from tarp.training.plugins.scheduling import BatchLearningScheduling
 
 
 def main():
     dna_tokenizer = NucleotideTokenizer()
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     train_masked_language_dataset = CosineDiffusionMaskingDataset(
         source=GenomeSliceSource(
@@ -69,17 +60,15 @@ def main():
         maximum_sequence_length=1024,
     )
 
-    embedding_dimension = 576
+    embedding_dimension = 384
     encoder = TransformerEncoder(
         model_dimension=embedding_dimension,
         number_of_layers=embedding_dimension // 32,
         number_of_heads=embedding_dimension // 64,
         feed_forward_dimension=(embedding_dimension * 8) // 3,
-        positional_encoder=HeterogeneousTransformativePositionalEncoding(
-            CachedIntegerRotaryPositionalEncoding(64, base=10_000),
-            CachedIntegerRotaryPositionalEncoding(64, base=10_000),
+        positional_encoder=ContinuousRotaryPositionalEncoding(
+            dimension=64, base=100_000
         ),
-        dropout=0.1,
     )
 
     Console.debug(
@@ -105,7 +94,7 @@ def main():
     criterion = nn.CrossEntropyLoss(ignore_index=-100)
 
     batch_size = 16
-    accumulation_steps = 16  # To achieve an effective batch size of 256
+    accumulation_steps = 32
     epochs = 5
     learning_rate = 5e-4
 
@@ -132,116 +121,58 @@ def main():
         milestones=[warmup_steps],
     )
 
-    trainer = DiffusionLanguageModelTrainer(
-        model=language_model,
-        training_dataset=train_masked_language_dataset,
-        validation_dataset=val_masked_language_dataset,
+    orchestrator = Orchestrator(
+        engine=SingleDeviceEngine(
+            model=language_model,
+            device_idx=0,
+            mixed_precision=True,
+            mixed_precision_dtype=torch.bfloat16
+            if torch.cuda.is_bf16_supported()
+            else torch.float16,
+        ),
+        objective=MaskedLanguageModelingObjective(
+            criterion=criterion,
+        ),
         optimizer=optimizer,
-        device=device,
-        criterion=criterion,
-        scheduler=scheduler,
-        batch_size=batch_size,
-        epochs=epochs,
-        worker_count=4,
-        accumulation_steps=accumulation_steps,
-        metrics=(
-            Perplexity(ignore_index=-100),
-            MaskedLanguageAccuracy(
-                ignore_index=-100,
-                num_classes=dna_tokenizer.vocabulary_size,
-            ),
-        ),
-    ).fit()
-
-    label_columns = (
-        pl.read_csv(Path("temp/data/cache/labels_reduced.csv")).to_series().to_list()
-    )
-    label_columns.remove("non_amr")
-
-    train_multilabel_dataset = MultiLabelClassificationDataset(
-        source=TabularSequenceSource(
-            Path("temp/data/processed/finetuning/fold_0/train/card_amr.parquet")
-        ),
-        tokenizer=dna_tokenizer,
-        sequence_column="dna_sequence",
-        label_columns=label_columns,
-        maximum_sequence_length=1024,
-    )
-
-    val_multilabel_dataset = MultiLabelClassificationDataset(
-        source=TabularSequenceSource(
-            Path("temp/data/processed/finetuning/fold_0/val/card_amr.parquet")
-        ),
-        tokenizer=dna_tokenizer,
-        sequence_column="dna_sequence",
-        label_columns=label_columns,
-        maximum_sequence_length=1024,
-    )
-
-    multilabel_model = ClassificationModel(
-        encoder=language_model.encoder.freeze(),
-        embedding=language_model.embedding,
-        number_of_classes=len(label_columns),
-    )
-
-    batch_size = 16
-    accumulation_steps = 16  # To achieve an effective batch size of 256
-    epochs = 10  # Fine-tuning for 10 epochs
-    learning_rate = 5e-4
-
-    steps_per_epoch = math.ceil(
-        len(train_masked_language_dataset) / (batch_size * accumulation_steps)
-    )
-    total_steps = steps_per_epoch * epochs
-    warmup_steps = total_steps // 10  # Warmup for the first 10% of training
-
-    criterion = nn.BCEWithLogitsLoss()
-
-    optimizer = torch.optim.AdamW(
-        params=multilabel_model.parameters(), lr=learning_rate, weight_decay=1e-2
-    )
-
-    scheduler = torch.optim.lr_scheduler.SequentialLR(
-        optimizer,
-        schedulers=[
-            torch.optim.lr_scheduler.LinearLR(
-                optimizer, start_factor=0.01, total_iters=warmup_steps
-            ),
-            torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer, T_max=total_steps - warmup_steps
-            ),
+        plugins=[
+            BatchLearningScheduling(
+                scheduler=scheduler,
+            )
         ],
-        milestones=[warmup_steps],
+        accumulation_steps=accumulation_steps,
     )
 
-    trainer = MultiLabelClassificationTrainer(
-        model=multilabel_model,
-        training_dataset=train_multilabel_dataset,
-        validation_dataset=val_multilabel_dataset,
-        optimizer=optimizer,
-        device=device,
-        criterion=criterion,
-        scheduler=scheduler,
+    train_dataloader = torch.utils.data.DataLoader(
+        train_masked_language_dataset,
         batch_size=batch_size,
-        epochs=epochs,
-        worker_count=4,
-        accumulation_steps=accumulation_steps,
-        metrics=(
-            Accuracy(task="multilabel", num_labels=len(label_columns)),
-            Precision(task="multilabel", num_labels=len(label_columns)),
-            Recall(task="multilabel", num_labels=len(label_columns)),
-            F1Score(task="multilabel", num_labels=len(label_columns)),
-        ),
-    ).fit()
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True,
+        drop_last=True,
+        collate_fn=train_masked_language_dataset.collate,
+    )
 
-    # Save the trained model
-    model_save_dir = Path("temp/models/")
+    val_dataloader = torch.utils.data.DataLoader(
+        val_masked_language_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True,
+        drop_last=True,
+        collate_fn=val_masked_language_dataset.collate,
+    )
 
-    model_save_dir.mkdir(parents=True, exist_ok=True)
+    state = State()
 
-    torch.save(multilabel_model.state_dict(), model_save_dir / "multilabel_model.pth")
-
-    torch.save(language_model.state_dict(), model_save_dir / "language_model.pth")
+    for epoch in range(epochs):
+        Console.info(f"Epoch {epoch + 1}/{epochs}")
+        state = orchestrator.run(
+            dataloader=train_dataloader, state=state, is_training=True
+        )
+        Console.info(f"Validation after epoch {epoch + 1}/{epochs}")
+        state = orchestrator.run(
+            dataloader=val_dataloader, state=state, is_training=False
+        )
 
 
 if __name__ == "__main__":
