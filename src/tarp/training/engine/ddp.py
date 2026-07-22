@@ -1,5 +1,6 @@
 import os
-from typing import ContextManager, cast, final
+from collections.abc import Iterable
+from typing import ContextManager, final
 
 import torch
 import torch.distributed as dist
@@ -74,14 +75,16 @@ class DistributedDataParallelEngine[ModelT: nn.Module]:
     def backward_pass(self, loss: Tensor) -> None:
         self.scaler.scale(loss).backward()
 
-    def step_optimizer(self, optimizer: Optimizer, clipping: float) -> bool:
-        self.scaler.unscale_(optimizer)
+    def step_optimizers(self, optimizers: Iterable[Optimizer], clipping: float) -> bool:
+        for optimizer in optimizers:
+            self.scaler.unscale_(optimizer)
 
         if clipping > 0.0:
             _ = torch.nn.utils.clip_grad_norm_(self.model.parameters(), clipping)
 
         initial_scale = self.scaler.get_scale()
-        _ = self.scaler.step(optimizer)
+        for optimizer in optimizers:
+            _ = self.scaler.step(optimizer)
         self.scaler.update()
 
         return self.scaler.get_scale() >= initial_scale

@@ -17,7 +17,7 @@ def blocked_pad_sequence(
     if not sequences:
         return torch.empty(0)
 
-    maximum_length = max(seq.size(0) for seq in sequences)
+    maximum_length = max(sequence.size(0) for sequence in sequences)
 
     padded_length = ((maximum_length + block_size - 1) // block_size) * block_size
 
@@ -42,6 +42,52 @@ def blocked_pad_sequence(
         padding_value=padding_value,
         padding_side=padding_side,
     )
+    _ = sequences.pop()
+
+    return padded[:-1] if batch_first else padded[:, :-1]
+
+
+def pad_to_length(
+    sequences: list[Tensor],
+    batch_first: bool = False,
+    padding_value: float = 0.0,
+    padding_side: str = "right",
+    length: int = 1024,
+):
+    if not sequences:
+        return torch.empty(0)
+
+    # Truncate first
+    sequences = [sequence[:length] for sequence in sequences]
+
+    maximum_length = max(sequence.size(0) for sequence in sequences)
+
+    if maximum_length == length:
+        return pad_sequence(
+            sequences,
+            batch_first=batch_first,
+            padding_value=padding_value,
+            padding_side=padding_side,
+        )
+
+    first_tensor = sequences[0]
+    dummy_shape = (length,) + first_tensor.shape[1:]
+
+    dummy_tensor = torch.full(
+        dummy_shape,
+        padding_value,
+        dtype=first_tensor.dtype,
+        device=first_tensor.device,
+    )
+
+    sequences.append(dummy_tensor)
+    padded = pad_sequence(
+        sequences,
+        batch_first=batch_first,
+        padding_value=padding_value,
+        padding_side=padding_side,
+    )
+
     _ = sequences.pop()
 
     return padded[:-1] if batch_first else padded[:, :-1]

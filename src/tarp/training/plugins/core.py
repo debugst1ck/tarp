@@ -9,7 +9,7 @@ class State:
     """State tracker statically bound to a specific telemetry layout."""
 
     current_epoch: int = 0
-    global_step: int = 0
+    global_optimizer_step: int = 0
     accumulation_step: int = 0
     is_training: bool = True
     should_stop: bool = False
@@ -18,7 +18,7 @@ class State:
     metric_history: list[dict[str, Tensor]] = field(default_factory=list)
 
 
-class Plugin[PredictionT, TargetT]:
+class Plugin[ResultT]:
     def on_epoch_begin(self, state: State, is_training: bool) -> None:
         """
         Called at the start of each training epoch.
@@ -41,7 +41,7 @@ class Plugin[PredictionT, TargetT]:
     def on_batch_end(
         self,
         state: State,
-        results: tuple[Tensor, PredictionT, TargetT],
+        results: ResultT,
         is_training: bool,
     ) -> None:
         """

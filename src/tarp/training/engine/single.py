@@ -1,5 +1,6 @@
 import contextlib
-from typing import ContextManager, cast, final
+from collections.abc import Iterable
+from typing import ContextManager, final
 
 import torch
 from torch import Tensor, nn
@@ -56,16 +57,21 @@ class SingleDeviceEngine[ModelT: nn.Module]:
         self._model.zero_grad(set_to_none=True)
 
     def backward_pass(self, loss: Tensor) -> None:
-        self.scaler.scale(loss).backward()
+        if self.scaler.is_enabled():
+            self.scaler.scale(loss).backward()
+        else:
+            loss.backward()
 
-    def step_optimizer(self, optimizer: Optimizer, clipping: float) -> bool:
-        self.scaler.unscale_(optimizer)
+    def step_optimizers(self, optimizers: Iterable[Optimizer], clipping: float) -> bool:
+        for optimizer in optimizers:
+            self.scaler.unscale_(optimizer)
 
         if clipping > 0.0:
             _ = torch.nn.utils.clip_grad_norm_(self._model.parameters(), clipping)
 
         initial_scale = self.scaler.get_scale()
-        _ = self.scaler.step(optimizer)
+        for optimizer in optimizers:
+            _ = self.scaler.step(optimizer)
         self.scaler.update()
 
         return self.scaler.get_scale() >= initial_scale

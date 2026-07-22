@@ -1,12 +1,12 @@
 import math
 from pathlib import Path
-from typing import cast
 
 import torch
+from _pytest.mark import param
 from torch import nn
 
 from tarp.cli.core import Console
-from tarp.data.datasets.language.diffusion import CosineDiffusionMaskingDataset
+from tarp.data.datasets.language.masked import PoissonSpanMaskingDataset
 from tarp.data.sources.sequence import GenomeSliceSource
 from tarp.model.backbone.untrained.transformer import TransformerEncoder
 from tarp.model.layers.positional.rotational import (
@@ -24,7 +24,7 @@ from tarp.training.plugins.scheduling import BatchLearningScheduling
 def main():
     dna_tokenizer = NucleotideTokenizer()
 
-    train_masked_language_dataset = CosineDiffusionMaskingDataset(
+    train_masked_language_dataset = PoissonSpanMaskingDataset(
         source=GenomeSliceSource(
             genomes_directory=Path("temp/data/external/sequences/nucleotides"),
             metadata_source=Path(
@@ -37,12 +37,10 @@ def main():
         ),
         tokenizer=dna_tokenizer,
         sequence_column="dna_sequence",
-        masking_probability_maximum=0.15,
-        masking_probability_minimum=0.05,
         maximum_sequence_length=1024,
     )
 
-    val_masked_language_dataset = CosineDiffusionMaskingDataset(
+    val_masked_language_dataset = PoissonSpanMaskingDataset(
         source=GenomeSliceSource(
             genomes_directory=Path("temp/data/external/sequences/nucleotides"),
             metadata_source=Path(
@@ -55,8 +53,6 @@ def main():
         ),
         tokenizer=dna_tokenizer,
         sequence_column="dna_sequence",
-        masking_probability_maximum=0.16,
-        masking_probability_minimum=0.14,
         maximum_sequence_length=1024,
     )
 
@@ -96,7 +92,8 @@ def main():
     batch_size = 16
     accumulation_steps = 32
     epochs = 5
-    learning_rate = 5e-4
+    learning_rate_adam = 2e-4
+    learning_rate_muon = 0.02
 
     steps_per_epoch = math.ceil(
         len(train_masked_language_dataset) / (batch_size * accumulation_steps)
@@ -104,18 +101,54 @@ def main():
     total_steps = steps_per_epoch * epochs
     warmup_steps = total_steps // 10  # Warmup for the first 10% of training
 
-    optimizer = torch.optim.AdamW(
-        params=language_model.parameters(), lr=learning_rate, weight_decay=1e-2
+    muon_parameters = [
+        p
+        for p in language_model.encoder.parameters()
+        if p.ndim >= 2 and p.requires_grad
+    ]
+
+    adamw_parameters = [
+        p for p in language_model.encoder.parameters() if p.ndim < 2 and p.requires_grad
+    ]
+
+    # Embedding parameters are optimized with AdamW
+    adamw_parameters += [
+        p for p in language_model.embedding.parameters() if p.requires_grad
+    ] + [p for p in language_model.language_head.parameters() if p.requires_grad]
+
+    adamw = torch.optim.AdamW(
+        params=adamw_parameters,
+        lr=learning_rate_adam,
     )
 
-    scheduler = torch.optim.lr_scheduler.SequentialLR(
-        optimizer,
+    muon = torch.optim.Muon(
+        params=muon_parameters,
+        lr=learning_rate_muon,
+    )
+
+    adam_scheduler = torch.optim.lr_scheduler.SequentialLR(
+        adamw,
         schedulers=[
             torch.optim.lr_scheduler.LinearLR(
-                optimizer, start_factor=0.01, total_iters=warmup_steps
+                adamw, start_factor=0.01, total_iters=warmup_steps
             ),
             torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer, T_max=total_steps - warmup_steps
+                adamw,
+                T_max=total_steps - warmup_steps,
+                eta_min=learning_rate_adam * 0.1,
+            ),
+        ],
+        milestones=[warmup_steps],
+    )
+
+    muon_scheduler = torch.optim.lr_scheduler.SequentialLR(
+        muon,
+        schedulers=[
+            torch.optim.lr_scheduler.LinearLR(
+                muon, start_factor=0.01, total_iters=warmup_steps
+            ),
+            torch.optim.lr_scheduler.CosineAnnealingLR(
+                muon, T_max=total_steps - warmup_steps, eta_min=learning_rate_muon * 0.1
             ),
         ],
         milestones=[warmup_steps],
@@ -133,47 +166,51 @@ def main():
         objective=MaskedLanguageModelingObjective(
             criterion=criterion,
         ),
-        optimizer=optimizer,
+        optimizers=(adamw, muon),
         plugins=[
             BatchLearningScheduling(
-                scheduler=scheduler,
+                schedulers=(adam_scheduler, muon_scheduler),
             )
         ],
         accumulation_steps=accumulation_steps,
     )
 
+    # train_sampler = torch.utils.data.DistributedSampler(
+    #     train_masked_language_dataset, shuffle=True
+    # )
     train_dataloader = torch.utils.data.DataLoader(
         train_masked_language_dataset,
         batch_size=batch_size,
-        shuffle=True,
         num_workers=4,
         pin_memory=True,
         drop_last=True,
         collate_fn=train_masked_language_dataset.collate,
+        # sampler=train_sampler,
     )
 
+    # val_sampler = torch.utils.data.DistributedSampler(
+    #     val_masked_language_dataset, shuffle=False
+    # )
     val_dataloader = torch.utils.data.DataLoader(
         val_masked_language_dataset,
         batch_size=batch_size,
-        shuffle=False,
         num_workers=4,
         pin_memory=True,
         drop_last=True,
         collate_fn=val_masked_language_dataset.collate,
+        # sampler=val_sampler,
     )
 
     state = State()
 
     for epoch in range(epochs):
         Console.info(f"Epoch {epoch + 1}/{epochs}")
+        # train_sampler.set_epoch(epoch)
         state = orchestrator.run(
             dataloader=train_dataloader, state=state, is_training=True
         )
         Console.info(f"Validation after epoch {epoch + 1}/{epochs}")
+        # val_sampler.set_epoch(epoch)
         state = orchestrator.run(
             dataloader=val_dataloader, state=state, is_training=False
         )
-
-
-if __name__ == "__main__":
-    main()

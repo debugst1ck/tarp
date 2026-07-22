@@ -1,14 +1,13 @@
-from collections.abc import Iterable, Sequence, Sized
+from collections.abc import Iterable, Sized
 from contextlib import nullcontext
 from typing import Protocol, final
 
-import torch
-from torch import Tensor, inference_mode, nn
+from torch import inference_mode, nn
 from torch.optim import Optimizer
 from tqdm.auto import tqdm
 
 from tarp.training.engine.core import Engine
-from tarp.training.objectives.core import Objective
+from tarp.training.objectives.core import Objective, Result
 from tarp.training.plugins.core import Plugin, State
 from tarp.typed.batch import SequenceBatch
 
@@ -18,19 +17,19 @@ class SizedIterable[T](Iterable[T], Sized, Protocol):
 
 
 @final
-class Orchestrator[ModelT: nn.Module, BatchT: SequenceBatch, PredictionT, TargetT]:
+class Orchestrator[ModelT: nn.Module, BatchT: SequenceBatch, ResultT: Result]:
     def __init__(
         self,
         engine: Engine[ModelT],
-        objective: Objective[ModelT, BatchT, PredictionT, TargetT],
-        optimizer: Optimizer,
-        plugins: Iterable[Plugin[PredictionT, TargetT]] | None = None,
+        objective: Objective[ModelT, BatchT, ResultT],
+        optimizers: Iterable[Optimizer],
+        plugins: Iterable[Plugin[ResultT]] | None = None,
         clipping: float = 1.0,
         accumulation_steps: int = 1,
     ) -> None:
         self.engine = engine
         self.objective = objective
-        self.optimizer = optimizer
+        self.optimizers = optimizers
         self.plugins = plugins or ()
         self.clipping = clipping
         self.accumulation_steps = max(1, accumulation_steps)
@@ -38,7 +37,7 @@ class Orchestrator[ModelT: nn.Module, BatchT: SequenceBatch, PredictionT, Target
     def _forward_pass(
         self,
         batch: BatchT,
-    ) -> tuple[Tensor, PredictionT, TargetT]:
+    ) -> ResultT:
         with self.engine.autocast():
             return self.objective.forward_pass(
                 self.engine.model,
@@ -49,11 +48,11 @@ class Orchestrator[ModelT: nn.Module, BatchT: SequenceBatch, PredictionT, Target
     def _iteration(
         self,
         batch: BatchT,
-    ) -> tuple[Tensor, PredictionT, TargetT]:
-        loss, predictions, targets = self._forward_pass(batch)
-        scaled_loss = loss / self.accumulation_steps
+    ) -> ResultT:
+        results = self._forward_pass(batch)
+        scaled_loss = results.loss / self.accumulation_steps
         self.engine.backward_pass(scaled_loss)
-        return loss, predictions, targets
+        return results
 
     def run(
         self, dataloader: SizedIterable[BatchT], state: State, is_training: bool = True
@@ -63,7 +62,7 @@ class Orchestrator[ModelT: nn.Module, BatchT: SequenceBatch, PredictionT, Target
         for plugin in self.plugins:
             plugin.on_epoch_begin(state, is_training)
 
-        self.engine.model.train(is_training)
+        _ = self.engine.model.train(is_training)
         self.engine.zero_gradients()
 
         total_batches = len(dataloader)
@@ -98,36 +97,37 @@ class Orchestrator[ModelT: nn.Module, BatchT: SequenceBatch, PredictionT, Target
                 if is_training:
                     if not is_step_boundary:
                         with self.engine.no_sync():
-                            loss, predictions, targets = self._iteration(batch)
+                            result = self._iteration(batch)
                     else:
-                        loss, predictions, targets = self._iteration(batch)
+                        result = self._iteration(batch)
 
                     state.accumulation_step += 1
                 else:
-                    loss, predictions, targets = self._forward_pass(batch)
+                    result = self._forward_pass(batch)
 
-                state.latest_loss = loss.detach().item()
+                # Synchronization point
+                state.latest_loss = result.loss.detach().item()
 
                 for plugin in self.plugins:
-                    plugin.on_batch_end(
-                        state, (loss, predictions, targets), is_training
-                    )
+                    plugin.on_batch_end(state, result, is_training)
 
                 if is_training and is_step_boundary:
-                    optimized = self.engine.step_optimizer(
-                        self.optimizer, self.clipping
+                    optimized = self.engine.step_optimizers(
+                        self.optimizers, self.clipping
                     )
-                    self.engine.zero_gradients()
                     state.accumulation_step = 0
 
                     if optimized:
-                        state.global_step += 1
+                        state.global_optimizer_step += 1
                         for plugin in self.plugins:
                             plugin.on_optimizer_step(state)
 
+                    self.engine.zero_gradients()
+
                 if self.engine.is_rank_zero:
                     progress_bar.set_postfix(
-                        loss=f"{state.latest_loss:.4f}", step=state.global_step
+                        loss=f"{state.latest_loss:.4f}",
+                        step=state.global_optimizer_step,
                     )
 
         for plugin in self.plugins:
