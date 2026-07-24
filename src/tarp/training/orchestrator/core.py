@@ -1,5 +1,6 @@
 from collections.abc import Iterable, Sized
 from contextlib import nullcontext
+from itertools import islice
 from typing import Protocol, final
 
 from torch import inference_mode, nn
@@ -57,19 +58,23 @@ class Orchestrator[ModelT: nn.Module, BatchT: SequenceBatch, ResultT: Result]:
     def run(
         self, dataloader: SizedIterable[BatchT], state: State, is_training: bool = True
     ) -> State:
+        state.device = self.engine.device
+
         state.is_training = is_training
 
-        for plugin in self.plugins:
-            plugin.on_epoch_begin(state, is_training)
+        if state.current_epoch_step == 0:
+            for plugin in self.plugins:
+                plugin.on_epoch_begin(state, is_training)
 
         _ = self.engine.model.train(is_training)
-        self.engine.zero_gradients()
+
+        if state.accumulation_step == 0:
+            self.engine.zero_gradients()
 
         total_batches = len(dataloader)
-
         description = "Training" if is_training else "Evaluating"
         progress_bar = tqdm(
-            dataloader,
+            islice(dataloader, state.current_epoch_step, None),
             desc=f"{description} Epoch {state.current_epoch}",
             total=total_batches,
             disable=not self.engine.is_rank_zero,

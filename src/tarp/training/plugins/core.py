@@ -1,24 +1,27 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from math import inf
 
-from torch import Tensor
+import torch
+
+from tarp.training.objectives.core import Result
 
 
 @dataclass(slots=True)
 class State:
     """State tracker statically bound to a specific telemetry layout."""
 
+    device: torch.device = torch.get_default_device()
     current_epoch: int = 0
+    current_epoch_step: int = 0
+    current_accumulation_step: int = 0
     global_optimizer_step: int = 0
     accumulation_step: int = 0
     is_training: bool = True
     should_stop: bool = False
     latest_loss: float = inf
 
-    metric_history: list[dict[str, Tensor]] = field(default_factory=list)
 
-
-class Plugin[ResultT]:
+class Plugin[ResultT: Result]:
     def on_epoch_begin(self, state: State, is_training: bool) -> None:
         """
         Called at the start of each training epoch.
@@ -41,7 +44,7 @@ class Plugin[ResultT]:
     def on_batch_end(
         self,
         state: State,
-        results: ResultT,
+        result: ResultT,
         is_training: bool,
     ) -> None:
         """

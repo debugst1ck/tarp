@@ -21,7 +21,7 @@ dependencies = [
     "scipy",                    # Scientific computing
     "biopython",                # Biological sequence handling
     "safetensors",              # Safe and efficient model storage
-    "torchmetrics",             # PyTorch utilities and metrics
+    "torcheval",                # PyTorch model evaluation
     "iterative-stratification", # Multilabel classification utilities
     "xgboost",                  # Quick classification
 ]

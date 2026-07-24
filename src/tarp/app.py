@@ -56,7 +56,7 @@ def main():
         maximum_sequence_length=1024,
     )
 
-    embedding_dimension = 384
+    embedding_dimension = 576
     encoder = TransformerEncoder(
         model_dimension=embedding_dimension,
         number_of_layers=embedding_dimension // 32,
@@ -90,7 +90,7 @@ def main():
     criterion = nn.CrossEntropyLoss(ignore_index=-100)
 
     batch_size = 16
-    accumulation_steps = 32
+    accumulation_steps = 48
     epochs = 5
     learning_rate_adam = 2e-4
     learning_rate_muon = 0.02
@@ -112,9 +112,12 @@ def main():
     ]
 
     # Embedding parameters are optimized with AdamW
-    adamw_parameters += [
-        p for p in language_model.embedding.parameters() if p.requires_grad
-    ] + [p for p in language_model.language_head.parameters() if p.requires_grad]
+    adamw_parameters += list(
+        set(
+            [p for p in language_model.embedding.parameters() if p.requires_grad]
+            + [p for p in language_model.language_head.parameters() if p.requires_grad]
+        )
+    )
 
     adamw = torch.optim.AdamW(
         params=adamw_parameters,
@@ -170,7 +173,7 @@ def main():
         plugins=[
             BatchLearningScheduling(
                 schedulers=(adam_scheduler, muon_scheduler),
-            )
+            ),
         ],
         accumulation_steps=accumulation_steps,
     )
