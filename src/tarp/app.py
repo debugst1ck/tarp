@@ -83,9 +83,10 @@ def main():
         ),
     )
 
-    Console.debug(
-        f"Trainable parameters: {sum(p.numel() for p in encoder.parameters() if p.requires_grad):,}"
-    )
+    if current_rank == 0:
+        Console.debug(
+            f"Trainable parameters: {sum(p.numel() for p in encoder.parameters() if p.requires_grad):,}"
+        )
 
     dna_embedding = nn.Embedding(
         num_embeddings=dna_tokenizer.vocabulary_size,
@@ -230,12 +231,14 @@ def main():
     state = State()
 
     for epoch in range(epochs):
-        Console.info(f"Epoch {epoch + 1}/{epochs}")
+        if current_rank == 0:
+            Console.info(f"Epoch {epoch + 1}/{epochs}")
         train_sampler.set_epoch(epoch)
         state = orchestrator.run(
             dataloader=train_dataloader, state=state, is_training=True
         )
-        Console.info(f"Validation after epoch {epoch + 1}/{epochs}")
+        if current_rank == 0:
+            Console.info(f"Validation after epoch {epoch + 1}/{epochs}")
         val_sampler.set_epoch(epoch)
         state = orchestrator.run(
             dataloader=val_dataloader, state=state, is_training=False
