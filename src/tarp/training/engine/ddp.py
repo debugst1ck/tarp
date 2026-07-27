@@ -69,8 +69,9 @@ class DistributedDataParallelEngine[ModelT: nn.Module]:
     def no_sync(self) -> ContextManager[object]:
         return self.model.no_sync()
 
-    def zero_gradients(self) -> None:
-        self.model.zero_grad(set_to_none=True)
+    def zero_gradients(self, optimizers: Iterable[Optimizer]) -> None:
+        for optimizer in optimizers:
+            optimizer.zero_grad(set_to_none=True)
 
     def backward_pass(self, loss: Tensor) -> None:
         self.scaler.scale(loss).backward()

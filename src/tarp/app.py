@@ -1,20 +1,24 @@
 import math
+import os
 from pathlib import Path
 
 import torch
-from _pytest.mark import param
+import torch.distributed as dist
 from torch import nn
 
 from tarp.cli.core import Console
 from tarp.data.datasets.language.masked import PoissonSpanMaskingDataset
 from tarp.data.sources.sequence import GenomeSliceSource
-from tarp.model.backbone.untrained.transformer import TransformerEncoder
+from tarp.model.backbone.untrained.transformer import (
+    TransformerEncoder,
+    TransformerEncoderLayerWithPositionalEncoding,
+)
 from tarp.model.layers.positional.rotational import (
     ContinuousRotaryPositionalEncoding,
 )
 from tarp.model.tasks.language import LanguageModel
 from tarp.preprocessing.tokenizers.atomic.monomer import NucleotideTokenizer
-from tarp.training.engine.single import SingleDeviceEngine
+from tarp.training.engine.fsdp2 import FullyShardedDataParallelEngine
 from tarp.training.objectives.language.masked import MaskedLanguageModelingObjective
 from tarp.training.orchestrator.core import Orchestrator
 from tarp.training.plugins.core import State
@@ -22,6 +26,12 @@ from tarp.training.plugins.scheduling import BatchLearningScheduling
 
 
 def main():
+    if not dist.is_initialized():
+        dist.init_process_group(backend="nccl")
+        # Sync the local rank to the current GPU device
+        local_rank = int(os.getenv("LOCAL_RANK", "0"))
+        torch.cuda.set_device(local_rank)
+
     dna_tokenizer = NucleotideTokenizer()
 
     train_masked_language_dataset = PoissonSpanMaskingDataset(
@@ -87,6 +97,20 @@ def main():
         vocabulary_size=dna_tokenizer.vocabulary_size,
     )
 
+    def layer_sharding_filter(module: nn.Module) -> bool:
+        # Check if the module name matches a structural transformer layer element
+        # (Adapt this to match your actual structural layer class name if needed)
+        return isinstance(module, TransformerEncoderLayerWithPositionalEncoding)
+
+    fsdp_engine = FullyShardedDataParallelEngine(
+        model=language_model,
+        mixed_precision=True,
+        mixed_precision_dtype=torch.bfloat16
+        if torch.cuda.is_bf16_supported()
+        else torch.float16,
+        sharding_filter=layer_sharding_filter,
+    )
+
     criterion = nn.CrossEntropyLoss(ignore_index=-100)
 
     batch_size = 16
@@ -101,22 +125,22 @@ def main():
     total_steps = steps_per_epoch * epochs
     warmup_steps = total_steps // 10  # Warmup for the first 10% of training
 
-    muon_parameters = [
+    muon_parameters = {
         p
-        for p in language_model.encoder.parameters()
+        for p in fsdp_engine.model.encoder.parameters()
         if p.ndim >= 2 and p.requires_grad
-    ]
+    }
 
-    adamw_parameters = [
-        p for p in language_model.encoder.parameters() if p.ndim < 2 and p.requires_grad
-    ]
+    adamw_parameters = {
+        p
+        for p in fsdp_engine.model.encoder.parameters()
+        if p.ndim < 2 and p.requires_grad
+    }
 
-    # Embedding parameters are optimized with AdamW
-    adamw_parameters += list(
-        set(
-            [p for p in language_model.embedding.parameters() if p.requires_grad]
-            + [p for p in language_model.language_head.parameters() if p.requires_grad]
-        )
+    adamw_parameters.update(
+        p
+        for p in fsdp_engine.model.parameters()
+        if p not in muon_parameters and p.requires_grad
     )
 
     adamw = torch.optim.AdamW(
@@ -158,14 +182,7 @@ def main():
     )
 
     orchestrator = Orchestrator(
-        engine=SingleDeviceEngine(
-            model=language_model,
-            device_idx=0,
-            mixed_precision=True,
-            mixed_precision_dtype=torch.bfloat16
-            if torch.cuda.is_bf16_supported()
-            else torch.float16,
-        ),
+        engine=fsdp_engine,
         objective=MaskedLanguageModelingObjective(
             criterion=criterion,
         ),
@@ -178,9 +195,9 @@ def main():
         accumulation_steps=accumulation_steps,
     )
 
-    # train_sampler = torch.utils.data.DistributedSampler(
-    #     train_masked_language_dataset, shuffle=True
-    # )
+    train_sampler = torch.utils.data.DistributedSampler(
+        train_masked_language_dataset, shuffle=True
+    )
     train_dataloader = torch.utils.data.DataLoader(
         train_masked_language_dataset,
         batch_size=batch_size,
@@ -188,12 +205,12 @@ def main():
         pin_memory=True,
         drop_last=True,
         collate_fn=train_masked_language_dataset.collate,
-        # sampler=train_sampler,
+        sampler=train_sampler,
     )
 
-    # val_sampler = torch.utils.data.DistributedSampler(
-    #     val_masked_language_dataset, shuffle=False
-    # )
+    val_sampler = torch.utils.data.DistributedSampler(
+        val_masked_language_dataset, shuffle=False
+    )
     val_dataloader = torch.utils.data.DataLoader(
         val_masked_language_dataset,
         batch_size=batch_size,
@@ -201,19 +218,23 @@ def main():
         pin_memory=True,
         drop_last=True,
         collate_fn=val_masked_language_dataset.collate,
-        # sampler=val_sampler,
+        sampler=val_sampler,
     )
 
     state = State()
 
     for epoch in range(epochs):
         Console.info(f"Epoch {epoch + 1}/{epochs}")
-        # train_sampler.set_epoch(epoch)
+        train_sampler.set_epoch(epoch)
         state = orchestrator.run(
             dataloader=train_dataloader, state=state, is_training=True
         )
         Console.info(f"Validation after epoch {epoch + 1}/{epochs}")
-        # val_sampler.set_epoch(epoch)
+        val_sampler.set_epoch(epoch)
         state = orchestrator.run(
             dataloader=val_dataloader, state=state, is_training=False
         )
+
+
+if __name__ == "__main__":
+    main()

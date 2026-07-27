@@ -12,8 +12,8 @@ from tarp.typed.batch import ClassificationBatch
 @dataclass(frozen=True)
 class ClassificationResults:
     loss: Tensor
-    scores: Tensor
-    labels: Tensor
+    predictions: Tensor  # [B, C]
+    targets: Tensor  # [B, C]
 
 
 @final
@@ -37,9 +37,9 @@ class MultiLabelClassificationObjective(
         labels = batch["labels"].to(device, non_blocking=True)
 
         scores, auxillary = model(sequence, attention_mask)
-        loss = self.criterion(scores.view(-1, scores.size(-1)), labels.view(-1))
+        loss = self.criterion(scores.reshape(-1, scores.size(-1)), labels.reshape(-1))
 
         if auxillary is not None:
             loss += auxillary
 
-        return ClassificationResults(loss=loss, scores=scores, labels=labels)
+        return ClassificationResults(loss=loss, predictions=scores, targets=labels)
