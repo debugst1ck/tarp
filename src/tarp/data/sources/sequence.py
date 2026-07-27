@@ -1,20 +1,20 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
-from typing import Generic, cast, final, override
+from typing import cast, final, override
 
 import polars as pl
 import torch
 from Bio import SeqIO
 from torch import Tensor
 
-from tarp.typed.data import RowT
+from tarp.typed.core import KnownT
 
 
-class SequenceDataSource(ABC, Generic[RowT]):
+class SequenceDataSource[RowT: Mapping[str, KnownT]](ABC):
     @property
     def height(self) -> int:
         """
@@ -51,7 +51,7 @@ class SequenceDataSource(ABC, Generic[RowT]):
         return CombinationSource([*self._get_sources(), *other._get_sources()])
 
 
-class CombinationSource(SequenceDataSource[RowT]):
+class CombinationSource[RowT: Mapping[str, KnownT]](SequenceDataSource[RowT]):
     """
     Combines multiple data sources into one.
     """
@@ -110,7 +110,7 @@ class CombinationSource(SequenceDataSource[RowT]):
 
 
 @final
-class TabularSequenceSource(SequenceDataSource[RowT]):
+class TabularSequenceSource[RowT: Mapping[str, KnownT]](SequenceDataSource[RowT]):
     """
     Reads from a tabular data source (e.g., CSV, Excel, Parquet). Stores in a Polars DataFrame.
     """
@@ -145,7 +145,7 @@ class TabularSequenceSource(SequenceDataSource[RowT]):
 
 
 @final
-class InMemorySequenceSource(SequenceDataSource[RowT]):
+class InMemorySequenceSource[RowT: Mapping[str, KnownT]](SequenceDataSource[RowT]):
     """
     A simple in-memory sequence data source backed by a list of rows.
     """
@@ -168,7 +168,7 @@ class InMemorySequenceSource(SequenceDataSource[RowT]):
 
 
 @final
-class GenomeSliceSource(SequenceDataSource[RowT]):
+class GenomeSliceSource[RowT: Mapping[str, KnownT]](SequenceDataSource[RowT]):
     """
     A data source that retrieves slices of a genome sequence.
     """

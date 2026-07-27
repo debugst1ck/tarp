@@ -1,0 +1,26 @@
+from collections.abc import Iterable
+from typing import ContextManager, Protocol
+
+import torch
+from torch import Tensor, nn
+from torch.optim import Optimizer
+
+
+class Engine[ModelT: nn.Module](Protocol):
+    @property
+    def model(self) -> ModelT: ...
+
+    @property
+    def device(self) -> torch.device: ...
+
+    @property
+    def is_rank_zero(self) -> bool: ...
+
+    def autocast(self) -> ContextManager[object]: ...
+    def no_sync(self) -> ContextManager[object]: ...
+
+    def zero_gradients(self, optimizers: Iterable[Optimizer]) -> None: ...
+    def backward_pass(self, loss: Tensor) -> None: ...
+    def step_optimizers(
+        self, optimizers: Iterable[Optimizer], clipping: float
+    ) -> bool: ...

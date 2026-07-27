@@ -4,12 +4,10 @@ from typing import Literal, final, overload, override
 from torch import Tensor, nn
 
 from tarp.model.backbone.core import Encoder
-from tarp.model.layers.attention.multihead import (
-    MultiHeadSelfAttentionWithPositionalEncoding,
-)
+from tarp.model.layers.attention.multihead import SelfAttention
 from tarp.model.layers.perceptron.gated import SwishGatedLinearUnitFeedForward
 from tarp.model.layers.pooling.atomic import GlobalAveragePooling1D
-from tarp.model.layers.positional.core import AttentionBiasPositionalEncoding
+from tarp.model.layers.positional.core import TransformativePositionalEncoding
 
 
 @final
@@ -19,16 +17,15 @@ class TransformerEncoderLayerWithPositionalEncoding(nn.Module):
         model_dimension: int,
         number_of_heads: int,
         feed_forward_dimension: int,
-        positional_encoder: AttentionBiasPositionalEncoding,
+        positional_encoder: TransformativePositionalEncoding,
         dropout: float = 0.1,
         bias: bool = False,
     ):
         super().__init__()
-        self.self_attention = MultiHeadSelfAttentionWithPositionalEncoding(
+        self.self_attention = SelfAttention(
             model_dimension=model_dimension,
             number_of_heads=number_of_heads,
             positional_encoder=positional_encoder,
-            dropout=dropout,
             bias=bias,
         )
         self.feed_forward = SwishGatedLinearUnitFeedForward(
@@ -48,14 +45,12 @@ class TransformerEncoderLayerWithPositionalEncoding(nn.Module):
         *,
         attention_mask: Tensor | None = None,
         positions: Tensor | None = None,
-        is_causal: bool = False,
     ) -> Tensor:
         features = features + self.dropout(
             self.self_attention(
                 self.attention_normalization(features),
                 attention_mask=attention_mask,
                 positions=positions,
-                is_causal=is_causal,
             )
         )
         features = features + self.dropout(
@@ -72,7 +67,7 @@ class TransformerEncoder(Encoder):
         number_of_heads: int,
         feed_forward_dimension: int,
         number_of_layers: int,
-        positional_encoder: AttentionBiasPositionalEncoding,
+        positional_encoder: TransformativePositionalEncoding,
         dropout: float = 0.1,
         bias: bool = False,
     ):
@@ -125,9 +120,8 @@ class TransformerEncoder(Encoder):
         for layer in self.layers:
             features = layer(
                 features,
-                attention_mask=attention_mask.unsqueeze(1).unsqueeze(2),
+                attention_mask=attention_mask,
                 positions=positions,
-                is_causal=False,
             )
         features = self.normalization(features)
         match mode:

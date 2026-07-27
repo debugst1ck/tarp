@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import override
 
 import torch
-from torch import Tensor
+from torch import Tensor, nn
 
 from tarp.model.layers.positional.core import (
     TransformativePositionalEncoding,
@@ -27,9 +27,7 @@ class RotaryPositionalEncoding(TransformativePositionalEncoding, ABC):
         # The dtype for core calculations
         self.dtype = dtype
 
-        self.inverse_frequencies: Tensor
-        self.register_buffer(
-            "inverse_frequencies",
+        self.inverse_frequencies = nn.Buffer(
             torch.empty(self.rotary_dimension // 2),
             persistent=False,
         )
@@ -54,13 +52,12 @@ class RotaryPositionalEncoding(TransformativePositionalEncoding, ABC):
 
     @abstractmethod
     def trigonometric_position_frequencies(
-        self, positions: Tensor, device: torch.device
+        self, positions: Tensor
     ) -> tuple[Tensor, Tensor]:
         """
         Compute the sine and cosine components for the given positions.
 
         :param Tensor positions: [B, L] The positions for which to compute the rotations.
-        :param torch.device device: The device on which to compute the rotations.
         """
         raise NotImplementedError
 
@@ -103,65 +100,21 @@ class RotaryPositionalEncoding(TransformativePositionalEncoding, ABC):
     def forward(self, features: Tensor, positions: Tensor) -> Tensor:
         rotated_features = self._apply_partial_rotary_embedding(
             features,
-            *self.trigonometric_position_frequencies(positions, features.device),
+            *self.trigonometric_position_frequencies(positions),
             self.rotary_dimension,
         )  # [..., D]
         return rotated_features
 
 
-class CachedIntegerRotaryPositionalEncoding(RotaryPositionalEncoding):
-    def __init__(
-        self,
-        dimension: int,
-        rotational_fraction: float = 1.0,
-        base: int = 10000,
-        dtype: torch.dtype = torch.float32,
-    ):
-        super().__init__(
-            dimension=dimension,
-            rotational_fraction=rotational_fraction,
-            base=base,
-            dtype=dtype,
-        )
-        self.trigonometric_cache = torch.empty(0, device="cpu", dtype=dtype)
-        self.cache_length: int = 0
-
-    def _trigonometric_cache(self, length: int, device: torch.device) -> Tensor:
-        if self.cache_length >= length and self.trigonometric_cache.device == device:
-            return self.trigonometric_cache
-
-        allocation_length = max(length, self.cache_length * 2)
-        positions = torch.arange(
-            allocation_length, device=device, dtype=self.dtype
-        )  # [L]
-        half_frequencies = torch.outer(positions, self.inverse_frequencies)  # [L, R/2]
-        frequencies = torch.cat((half_frequencies, half_frequencies), dim=-1)
-
-        self.trigonometric_cache = torch.stack(
-            (frequencies.sin(), frequencies.cos()), dim=-1
-        )  # [L, R, 2]
-        self.cache_length = allocation_length
-        return self.trigonometric_cache
-
-    @override
-    def trigonometric_position_frequencies(
-        self, positions: Tensor, device: torch.device
-    ) -> tuple[Tensor, Tensor]:
-        cache = self._trigonometric_cache(
-            int(positions.max().item() + 1), device
-        )  # [L, R, 2]
-        valid = cache[positions]  # [B, L, R, 2]
-        return valid[..., 0], valid[..., 1]  # [B, L, R], [B, L, R]
-
-
 class ContinuousRotaryPositionalEncoding(RotaryPositionalEncoding):
     """
-    Rotary positional embedding with fractional position support.
+    Full Rotary positional embedding.
     """
 
     @override
     def trigonometric_position_frequencies(
-        self, positions: Tensor, device: torch.device
+        self,
+        positions: Tensor,
     ) -> tuple[Tensor, Tensor]:
         half_frequencies = torch.einsum(
             "bl,d->bld",
