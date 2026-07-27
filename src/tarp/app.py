@@ -32,6 +32,12 @@ def main():
         local_rank = int(os.getenv("LOCAL_RANK", "0"))
         torch.cuda.set_device(local_rank)
 
+    world_size = dist.get_world_size()
+    current_rank = dist.get_rank()
+
+    if current_rank == 0:
+        Console.info(f"Total GPU Devices in use (World Size): {world_size}")
+
     dna_tokenizer = NucleotideTokenizer()
 
     train_masked_language_dataset = PoissonSpanMaskingDataset(
