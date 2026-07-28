@@ -122,7 +122,9 @@ class TransformerEncoder(Encoder):
         positions: Tensor | None = None,
         mode: Literal["sequence", "pooled", "both"],
     ) -> tuple[Tensor, Tensor | None] | tuple[Tensor, Tensor, Tensor | None]:
-        features = self.feature_extraction(sequence_embeddings)
+        features = self.feature_extraction(
+            sequence_embeddings, attention_mask=attention_mask
+        )
         for layer in self.layers:
             features = layer(
                 features,

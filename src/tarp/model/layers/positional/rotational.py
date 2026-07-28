@@ -1,12 +1,10 @@
 from abc import ABC, abstractmethod
-from typing import override
+from typing import final, override
 
 import torch
 from torch import Tensor, nn
 
-from tarp.model.layers.positional.core import (
-    TransformativePositionalEncoding,
-)
+from tarp.model.layers.positional.core import TransformativePositionalEncoding
 
 
 class RotaryPositionalEncoding(TransformativePositionalEncoding, ABC):
@@ -14,7 +12,7 @@ class RotaryPositionalEncoding(TransformativePositionalEncoding, ABC):
         self,
         dimension: int,
         rotational_fraction: float = 1.0,
-        base: int = 10000,
+        base: int = 10_000,
         dtype: torch.dtype = torch.float32,
     ):
         super().__init__()
@@ -28,27 +26,21 @@ class RotaryPositionalEncoding(TransformativePositionalEncoding, ABC):
         self.dtype = dtype
 
         self.inverse_frequencies = nn.Buffer(
-            torch.empty(self.rotary_dimension // 2),
+            1.0
+            / (
+                self.base
+                ** (
+                    torch.arange(
+                        0,
+                        self.rotary_dimension,
+                        2,
+                        dtype=self.dtype,
+                    )
+                    / self.rotary_dimension
+                )
+            ),
             persistent=False,
         )
-        self.reset_parameters()
-
-    def reset_parameters(self) -> None:
-        inverse_frequencies = 1.0 / (
-            self.base
-            ** (
-                torch.arange(
-                    0,
-                    self.rotary_dimension,
-                    2,
-                    dtype=self.dtype,
-                )
-                / self.rotary_dimension
-            )
-        )  # [R/2]
-
-        with torch.no_grad():
-            _ = self.inverse_frequencies.copy_(inverse_frequencies)
 
     @abstractmethod
     def trigonometric_position_frequencies(
@@ -104,6 +96,52 @@ class RotaryPositionalEncoding(TransformativePositionalEncoding, ABC):
             self.rotary_dimension,
         )  # [..., D]
         return rotated_features
+
+
+@final
+class CachedRotaryPositionalEncoding(RotaryPositionalEncoding):
+    """
+    Cached Rotary positional embedding.
+    """
+
+    def __init__(
+        self,
+        dimension: int,
+        rotational_fraction: float = 1,
+        base: int = 10_000,
+        dtype: torch.dtype = torch.float32,
+        cache_size: int = 4096,
+    ):
+        super().__init__(dimension, rotational_fraction, base, dtype)
+
+        frequencies = self.frequencies(
+            torch.arange(cache_size, dtype=self.dtype)
+        )  # [L, R]
+
+        self.sine_cache = nn.Buffer(frequencies.sin(), persistent=False)
+        self.cosine_cache = nn.Buffer(frequencies.cos(), persistent=False)
+        self.cache_size = cache_size
+
+    def frequencies(self, positions: Tensor) -> Tensor:
+        half_frequencies = torch.einsum(
+            "l,d->ld",
+            positions,
+            self.inverse_frequencies,
+        )  # [L, R/2]
+        frequencies = torch.cat((half_frequencies, half_frequencies), dim=-1)  # [L, R]
+        return frequencies  # [L, R]
+
+    @override
+    def trigonometric_position_frequencies(
+        self,
+        positions: Tensor,
+    ) -> tuple[Tensor, Tensor]:
+        if positions.max() < self.cache_size:
+            return self.sine_cache[positions], self.cosine_cache[
+                positions
+            ]  # [B, L, R], [B, L, R]
+        frequencies = self.frequencies(positions.to(self.dtype))  # [B, L, R]
+        return frequencies.sin(), frequencies.cos()  # [B, L, R], [B, L, R]
 
 
 class ContinuousRotaryPositionalEncoding(RotaryPositionalEncoding):
