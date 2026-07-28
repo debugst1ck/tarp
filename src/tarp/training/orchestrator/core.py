@@ -133,6 +133,9 @@ class Orchestrator[ModelT: nn.Module, BatchT: SequenceBatch, ResultT: Result]:
 
                     self.engine.zero_gradients(optimizers=self.optimizers)
 
+        # Synchronize
+        self.engine.barrier()
+
         for plugin in self.plugins:
             plugin.on_epoch_end(state, is_training)
 
@@ -140,5 +143,4 @@ class Orchestrator[ModelT: nn.Module, BatchT: SequenceBatch, ResultT: Result]:
         if is_training:
             state.epoch_index += 1
             state.local_accumulation_step = 0
-
         return state

@@ -1,10 +1,12 @@
 import contextlib
 from collections.abc import Iterable
-from typing import ContextManager, final
+from typing import ContextManager, cast, final
 
 import torch
 from torch import Tensor, nn
 from torch.optim import Optimizer
+
+from tarp.cli.core import Console
 
 
 @final
@@ -12,22 +14,25 @@ class SingleDeviceEngine[ModelT: nn.Module]:
     def __init__(
         self,
         model: ModelT,
-        device_idx: int = 0,
         mixed_precision: bool = True,
         mixed_precision_dtype: torch.dtype = torch.bfloat16,
     ):
-        self._device = torch.device(
-            f"cuda:{device_idx}" if torch.cuda.is_available() else "cpu"
-        )
+        if torch.accelerator.is_available():
+            self._device = cast(torch.device, torch.accelerator.current_accelerator())
+        else:
+            self._device = torch.get_default_device()
 
         self._model = model.to(self._device)
 
         self.mixed_precision_dtype = mixed_precision_dtype
         self.mixed_precision = mixed_precision
 
-        # Guard rails: GradScaler is only active for float16 computations.
         # Running GradScaler with bfloat16 will waste cycles or raise warnings.
         use_scaler = mixed_precision and mixed_precision_dtype == torch.float16
+        if use_scaler and self.is_rank_zero:
+            Console.warning(
+                "GradScaler is enabled for mixed precision training with float16."
+            )
         self.scaler = torch.amp.GradScaler(enabled=use_scaler)
 
     @property
@@ -43,9 +48,8 @@ class SingleDeviceEngine[ModelT: nn.Module]:
         return True
 
     def autocast(self) -> ContextManager[object]:
-        device_type = "cuda" if self._device.type == "cuda" else "cpu"
         return torch.amp.autocast(
-            device_type=device_type,
+            device_type=self.device.type,
             dtype=self.mixed_precision_dtype,
             enabled=self.mixed_precision,
         )
@@ -76,3 +80,6 @@ class SingleDeviceEngine[ModelT: nn.Module]:
         self.scaler.update()
 
         return self.scaler.get_scale() >= initial_scale
+
+    def barrier(self) -> None:
+        torch.accelerator.synchronize(self.device)

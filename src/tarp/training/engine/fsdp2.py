@@ -80,7 +80,7 @@ class FullyShardedDataParallelEngine[ModelT: nn.Module]:
 
     @property
     def model(self) -> ModelT:
-        return self._model  # type: ignore
+        return self._model
 
     @property
     def device(self) -> torch.device:
@@ -112,3 +112,7 @@ class FullyShardedDataParallelEngine[ModelT: nn.Module]:
         for optimizer in optimizers:
             optimizer.step()
         return True
+
+    def barrier(self) -> None:
+        if dist.is_initialized():
+            dist.barrier()

@@ -5,12 +5,12 @@ import torch
 from torch import Tensor, nn
 
 from tarp.model.tasks.classification import ClassificationModel
-from tarp.training.objectives.core import Objective
+from tarp.training.objectives.core import Objective, Result
 from tarp.typed.batch import ClassificationBatch
 
 
 @dataclass(frozen=True)
-class ClassificationResults:
+class ClassificationResults(Result):
     loss: Tensor
     predictions: Tensor  # [B, C]
     targets: Tensor  # [B, C]
