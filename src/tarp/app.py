@@ -1,24 +1,17 @@
 import math
-import os
 from pathlib import Path
 
 import torch
-import torch.distributed as dist
 from torch import nn
 
 from tarp.cli.core import Console
 from tarp.data.datasets.language.masked import PoissonSpanMaskingDataset
 from tarp.data.sources.sequence import GenomeSliceSource
-from tarp.model.backbone.untrained.transformer import (
-    TransformerEncoder,
-    TransformerEncoderLayerWithPositionalEncoding,
-)
-from tarp.model.layers.positional.rotational import (
-    ContinuousRotaryPositionalEncoding,
-)
+from tarp.model.backbone.untrained.transformer import TransformerEncoder
+from tarp.model.layers.positional.rotational import CachedRotaryPositionalEncoding
 from tarp.model.tasks.language import LanguageModel
 from tarp.preprocessing.tokenizers.atomic.monomer import NucleotideTokenizer
-from tarp.training.engine.fsdp2 import FullyShardedDataParallelEngine
+from tarp.training.engine.single import SingleDeviceEngine
 from tarp.training.objectives.language.masked import MaskedLanguageModelingObjective
 from tarp.training.orchestrator.core import Orchestrator
 from tarp.training.plugins.core import State
@@ -26,18 +19,6 @@ from tarp.training.plugins.scheduling import BatchLearningScheduling
 
 
 def main():
-    if not dist.is_initialized():
-        dist.init_process_group(backend="nccl")
-        # Sync the local rank to the current GPU device
-        local_rank = int(os.getenv("LOCAL_RANK", "0"))
-        torch.cuda.set_device(local_rank)
-
-    world_size = dist.get_world_size()
-    current_rank = dist.get_rank()
-
-    if current_rank == 0:
-        Console.info(f"Total GPU Devices in use (World Size): {world_size}")
-
     dna_tokenizer = NucleotideTokenizer()
 
     train_masked_language_dataset = PoissonSpanMaskingDataset(
@@ -72,21 +53,14 @@ def main():
         maximum_sequence_length=1024,
     )
 
-    embedding_dimension = 576
+    embedding_dimension = 384
     encoder = TransformerEncoder(
         model_dimension=embedding_dimension,
         number_of_layers=embedding_dimension // 32,
         number_of_heads=embedding_dimension // 64,
         feed_forward_dimension=(embedding_dimension * 8) // 3,
-        positional_encoder=ContinuousRotaryPositionalEncoding(
-            dimension=64, base=100_000
-        ),
+        positional_encoder=CachedRotaryPositionalEncoding(dimension=64, base=10_000),
     )
-
-    if current_rank == 0:
-        Console.debug(
-            f"Trainable parameters: {sum(p.numel() for p in encoder.parameters() if p.requires_grad):,}"
-        )
 
     dna_embedding = nn.Embedding(
         num_embeddings=dna_tokenizer.vocabulary_size,
@@ -104,19 +78,18 @@ def main():
         vocabulary_size=dna_tokenizer.vocabulary_size,
     )
 
-    def layer_sharding_filter(module: nn.Module) -> bool:
-        # Check if the module name matches a structural transformer layer element
-        # (Adapt this to match your actual structural layer class name if needed)
-        return isinstance(module, TransformerEncoderLayerWithPositionalEncoding)
-
-    fsdp_engine = FullyShardedDataParallelEngine(
+    engine = SingleDeviceEngine(
         model=language_model,
         mixed_precision=True,
         mixed_precision_dtype=torch.bfloat16
         if torch.cuda.is_bf16_supported()
         else torch.float16,
-        sharding_filter=layer_sharding_filter,
     )
+
+    if engine.is_rank_zero == 0:
+        Console.debug(
+            f"Trainable parameters: {sum(p.numel() for p in encoder.parameters() if p.requires_grad):,}"
+        )
 
     criterion = nn.CrossEntropyLoss(ignore_index=-100)
 
@@ -133,20 +106,16 @@ def main():
     warmup_steps = total_steps // 10  # Warmup for the first 10% of training
 
     muon_parameters = {
-        p
-        for p in fsdp_engine.model.encoder.parameters()
-        if p.ndim >= 2 and p.requires_grad
+        p for p in engine.model.encoder.parameters() if p.ndim == 2 and p.requires_grad
     }
 
     adamw_parameters = {
-        p
-        for p in fsdp_engine.model.encoder.parameters()
-        if p.ndim < 2 and p.requires_grad
+        p for p in engine.model.encoder.parameters() if p.ndim != 2 and p.requires_grad
     }
 
     adamw_parameters.update(
         p
-        for p in fsdp_engine.model.parameters()
+        for p in engine.model.parameters()
         if p not in muon_parameters and p.requires_grad
     )
 
@@ -189,7 +158,7 @@ def main():
     )
 
     orchestrator = Orchestrator(
-        engine=fsdp_engine,
+        engine=engine,
         objective=MaskedLanguageModelingObjective(
             criterion=criterion,
         ),
@@ -202,9 +171,6 @@ def main():
         accumulation_steps=accumulation_steps,
     )
 
-    train_sampler = torch.utils.data.DistributedSampler(
-        train_masked_language_dataset, shuffle=True
-    )
     train_dataloader = torch.utils.data.DataLoader(
         train_masked_language_dataset,
         batch_size=batch_size,
@@ -212,12 +178,8 @@ def main():
         pin_memory=True,
         drop_last=True,
         collate_fn=train_masked_language_dataset.collate,
-        sampler=train_sampler,
     )
 
-    val_sampler = torch.utils.data.DistributedSampler(
-        val_masked_language_dataset, shuffle=False
-    )
     val_dataloader = torch.utils.data.DataLoader(
         val_masked_language_dataset,
         batch_size=batch_size,
@@ -225,21 +187,18 @@ def main():
         pin_memory=True,
         drop_last=True,
         collate_fn=val_masked_language_dataset.collate,
-        sampler=val_sampler,
     )
 
     state = State()
 
     for epoch in range(epochs):
-        if current_rank == 0:
+        if engine.is_rank_zero:
             Console.info(f"Epoch {epoch + 1}/{epochs}")
-        train_sampler.set_epoch(epoch)
         state = orchestrator.run(
             dataloader=train_dataloader, state=state, is_training=True
         )
-        if current_rank == 0:
+        if engine.is_rank_zero:
             Console.info(f"Validation after epoch {epoch + 1}/{epochs}")
-        val_sampler.set_epoch(epoch)
         state = orchestrator.run(
             dataloader=val_dataloader, state=state, is_training=False
         )

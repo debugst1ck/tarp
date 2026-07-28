@@ -106,4 +106,4 @@ class AdaptiveReceptiveField1D(nn.Module):
     def forward(self, features: Tensor, attention_mask: Tensor) -> Tensor:
         experts = self.expert_stack(features, attention_mask)  # [B, L, K, D]
         routed = self.router(features, experts)  # [B, L, D]
-        return routed
+        return routed + features  # residual connection
