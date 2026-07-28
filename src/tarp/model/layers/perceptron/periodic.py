@@ -4,9 +4,10 @@ from typing import override
 from torch import Tensor, nn
 
 from tarp.functional.activations.periodic import sine
+from tarp.model.layers.perceptron.core import FeedForward
 
 
-class SinusoidalFeedForward(nn.Module):
+class SinusoidalFeedForward(FeedForward):
     """
     Sinusoidal Representation Network (SIREN) layer.
     """
@@ -49,8 +50,8 @@ class SinusoidalFeedForward(nn.Module):
             )
 
     @override
-    def forward(self, input: Tensor) -> Tensor:
+    def forward(self, features: Tensor) -> Tensor:
         # Calls the functional sine calculation directly
-        projected = self.projection(input)
+        projected = self.projection(features)
         activated = sine(projected, angular_frequency=self.angular_frequency)
         return self.dropout(activated)

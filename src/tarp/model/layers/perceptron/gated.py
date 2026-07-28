@@ -3,9 +3,10 @@ from typing import override
 from torch import Tensor, nn
 
 from tarp.functional.activations.gated import swiglu
+from tarp.model.layers.perceptron.core import FeedForward
 
 
-class SwishGatedLinearUnitFeedForward(nn.Module):
+class SwishGatedLinearUnitFeedForward(FeedForward):
     def __init__(
         self,
         input_dimension: int,

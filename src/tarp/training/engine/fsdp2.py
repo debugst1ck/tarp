@@ -1,13 +1,16 @@
 import contextlib
 import os
 from collections.abc import Callable, Iterable
-from typing import Any, ContextManager, final
+from types import TracebackType
+from typing import ContextManager, final
 
 import torch
 import torch.distributed as dist
 from torch import Tensor, nn
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.optim import Optimizer
+
+from tarp.cli.core import Console
 
 
 @final
@@ -20,7 +23,12 @@ class FullyShardedDataParallel2NoSync:
     def __enter__(self) -> None:
         self._model.set_requires_gradient_sync(False)
 
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self._model.set_requires_gradient_sync(True)
 
 
@@ -45,6 +53,15 @@ class FullyShardedDataParallelEngine[ModelT: nn.Module]:
         if not dist.is_initialized():
             raise RuntimeError("FSDP2 requires torch.distributed initialization.")
 
+        if (
+            mixed_precision
+            and mixed_precision_dtype == torch.float16
+            and self.is_rank_zero
+        ):
+            Console.warning(
+                "FSDP2 does not support GradScaler. Float16 training may suffer from gradient underflow. Consider bfloat16 for safety, or implement manual gradient scaling if you have float16-specific requirements."
+            )
+
         # Configure FSDP2 Mixed Precision Policy
         fsdp_kwargs = {}
         if mixed_precision:
@@ -53,11 +70,10 @@ class FullyShardedDataParallelEngine[ModelT: nn.Module]:
                 reduce_dtype=torch.float32,  # Best practice: keep reductions in fp32 for accuracy
             )
 
-        # 1. Externally mark and shard submodules first
         if sharding_filter is not None:
-            for module in moved.modules():
-                if sharding_filter(module):
-                    fully_shard(module, **fsdp_kwargs)
+            modules_to_shard = [m for m in moved.modules() if sharding_filter(m)]
+            for module in reversed(modules_to_shard):  # Leaf-first
+                _ = fully_shard(module, **fsdp_kwargs)
 
         # 2. Shard the root model wrapper (Required by FSDP2)
         self._model = fully_shard(moved, **fsdp_kwargs)
