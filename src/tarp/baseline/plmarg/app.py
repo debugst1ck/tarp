@@ -6,47 +6,56 @@ import numpy as np
 import polars as pl
 import torch
 from sklearn.metrics import classification_report
-from sklearn.neighbors import KNeighborsClassifier
 from torch import Tensor
 from torch.utils.data import DataLoader
 from xgboost import XGBClassifier
 
 from tarp.data.datasets.classification.multilabel import MultiLabelClassificationDataset
-from tarp.data.sources.sequence import SequenceDataSource, TabularSequenceSource
+from tarp.data.sources.sequence import TabularSequenceSource
 from tarp.model.backbone.core import Encoder
 from tarp.model.backbone.pretrained.esm1b import Esm1bEncoder
 from tarp.preprocessing.tokenizers.pretrained.esm1b import Esm1bTokenizer
 from tarp.training.engine.single import SingleDeviceEngine
-from tarp.training.objectives.core import Result
 from tarp.training.orchestrator.core import Orchestrator
 from tarp.training.plugins.core import Plugin, State
 from tarp.typed.batch import ClassificationBatch
 
 
 @dataclass(slots=True)
-class ExtractionResult(Result):
+class ExtractionResult:
     loss: Tensor
     embedding: Tensor
     labels: Tensor
 
 
 class EmbeddingExtractionObjective:
-    @torch.compile
-    def forward_pass(
-        self, model: Encoder, batch: ClassificationBatch, device: torch.device
-    ) -> ExtractionResult:
+    def preprocess(
+        self, batch: ClassificationBatch, device: torch.device
+    ) -> tuple[Tensor, Tensor, Tensor]:
         # Move tensors to hardware accelerator
-        seq = batch["sequence"].to(device)
-        mask = batch["attention_mask"].to(device)
+        seq = batch["sequence"].to(device, non_blocking=True)
+        mask = batch["attention_mask"].to(device, non_blocking=True)
+        labels = batch["labels"].to(device, non_blocking=True)
+        return seq, mask, labels
 
+    @torch.compile
+    def compute(
+        self, model: Encoder, seq: Tensor, mask: Tensor, labels: Tensor
+    ) -> ExtractionResult:
         # Extract features from frozen ESM backbone
         embedding, _ = model(seq, mask, mode="pooled")
 
         return ExtractionResult(
-            loss=torch.tensor(0.0, device=device),
+            loss=torch.tensor(0.0, device=seq.device),
             embedding=embedding.detach(),
-            labels=batch["labels"].to(device),
+            labels=labels,
         )
+
+    def forward_pass(
+        self, model: Encoder, batch: ClassificationBatch, device: torch.device
+    ) -> ExtractionResult:
+        seq, mask, labels = self.preprocess(batch, device)
+        return self.compute(model, seq, mask, labels)
 
 
 class EmbeddingAccumulatorPlugin(Plugin[ExtractionResult]):

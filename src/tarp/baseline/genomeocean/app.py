@@ -23,29 +23,62 @@ from tarp.typed.batch import ClassificationBatch
 
 
 @dataclass(slots=True)
-class ExtractionResult(Result):
+class ExtractionResult:
     loss: Tensor
     embedding: Tensor
     labels: Tensor
 
 
 class EmbeddingExtractionObjective:
-    @torch.compile
-    def forward_pass(
-        self, model: Encoder, batch: ClassificationBatch, device: torch.device
-    ) -> ExtractionResult:
+    def preprocess(
+        self, batch: ClassificationBatch, device: torch.device
+    ) -> tuple[Tensor, Tensor, Tensor]:
         # Move tensors to hardware accelerator
-        seq = batch["sequence"].to(device)
-        mask = batch["attention_mask"].to(device)
+        seq = batch["sequence"].to(device, non_blocking=True)
+        mask = batch["attention_mask"].to(device, non_blocking=True)
+        labels = batch["labels"].to(device, non_blocking=True)
+        return seq, mask, labels
 
+    @torch.compile
+    def compute(
+        self, model: Encoder, seq: Tensor, mask: Tensor, labels: Tensor
+    ) -> ExtractionResult:
         # Extract features from frozen ESM backbone
         embedding, _ = model(seq, mask, mode="pooled")
 
         return ExtractionResult(
-            loss=torch.tensor(0.0, device=device),
+            loss=torch.tensor(0.0, device=seq.device),
             embedding=embedding.detach(),
-            labels=batch["labels"].to(device),
+            labels=labels,
         )
+
+    def forward_pass(
+        self, model: Encoder, batch: ClassificationBatch, device: torch.device
+    ) -> ExtractionResult:
+        seq, mask, labels = self.preprocess(batch, device)
+        return self.compute(model, seq, mask, labels)
+
+
+class EmbeddingAccumulatorPlugin(Plugin[ExtractionResult]):
+    def __init__(self) -> None:
+        self.embeddings: list[np.ndarray] = []
+        self.labels: list[np.ndarray] = []
+
+    @override
+    def on_epoch_begin(self, state: State, is_training: bool) -> None:
+        self.embeddings.clear()
+        self.labels.clear()
+
+    @override
+    def on_batch_end(
+        self, state: State, result: ExtractionResult, is_training: bool
+    ) -> None:
+        # Move to host memory and cast to numpy arrays
+        self.embeddings.append(result.embedding.cpu().numpy())
+        self.labels.append(result.labels.cpu().numpy())
+
+    def get_dataset(self) -> tuple[np.ndarray, np.ndarray]:
+        return np.vstack(self.embeddings), np.vstack(self.labels)
 
 
 class EmbeddingAccumulatorPlugin(Plugin[ExtractionResult]):
