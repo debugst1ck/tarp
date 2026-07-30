@@ -4,12 +4,12 @@ from typing import final, override
 import torch
 from torch import Tensor, nn
 
+from odyssey import Objective
 from tarp.model.tasks.language import LanguageModel
-from tarp.training.objectives.core import Objective
 from tarp.typed.batch import LanguageBatch
 
 
-@dataclass
+@dataclass(frozen=True)
 class LanguageModelResults:
     loss: Tensor
     scores: Tensor
@@ -32,7 +32,7 @@ class MaskedLanguageModelingObjective(
         truth = batch["truth"].to(device, non_blocking=True)
         return sequence, attention_mask, truth
 
-    @torch.compile
+    @torch.compile(mode="max-autotune-no-cudagraphs")
     def compute(
         self,
         model: LanguageModel,

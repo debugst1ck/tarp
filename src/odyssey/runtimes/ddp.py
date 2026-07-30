@@ -8,11 +8,9 @@ from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 
-from tarp.cli.core import Console
-
 
 @final
-class DistributedDataParallelEngine[ModelT: nn.Module]:
+class DistributedDataParallelRuntime[ModelT: nn.Module]:
     def __init__(
         self,
         model: ModelT,
@@ -45,10 +43,6 @@ class DistributedDataParallelEngine[ModelT: nn.Module]:
 
         # Guard rails: GradScaler is only active for float16 computations.
         use_scaler = mixed_precision and mixed_precision_dtype == torch.float16
-        if use_scaler and self.is_rank_zero:
-            Console.warning(
-                "GradScaler is enabled for mixed precision training with float16."
-            )
         self.scaler = torch.amp.GradScaler(enabled=use_scaler)
 
     @property
@@ -60,7 +54,7 @@ class DistributedDataParallelEngine[ModelT: nn.Module]:
         return self._device
 
     @property
-    def is_rank_zero(self) -> bool:
+    def is_main_process(self) -> bool:
         # Ensures console logging / progress bars print exclusively on the master branch
         return self._global_rank == 0
 
@@ -77,7 +71,7 @@ class DistributedDataParallelEngine[ModelT: nn.Module]:
 
     def zero_gradients(self, optimizers: Iterable[Optimizer]) -> None:
         for optimizer in optimizers:
-            optimizer.zero_grad(set_to_none=True)
+            optimizer.zero_grad()
 
     def backward_pass(self, loss: Tensor) -> None:
         self.scaler.scale(loss).backward()
@@ -96,6 +90,6 @@ class DistributedDataParallelEngine[ModelT: nn.Module]:
 
         return self.scaler.get_scale() >= initial_scale
 
-    def barrier(self) -> None:
+    def synchronize(self) -> None:
         if dist.is_initialized():
             dist.barrier()

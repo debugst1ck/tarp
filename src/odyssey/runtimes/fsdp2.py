@@ -10,8 +10,6 @@ from torch import Tensor, nn
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.optim import Optimizer
 
-from tarp.cli.core import Console
-
 
 @final
 class FullyShardedDataParallel2NoSync:
@@ -33,7 +31,7 @@ class FullyShardedDataParallel2NoSync:
 
 
 @final
-class FullyShardedDataParallelEngine[ModelT: nn.Module]:
+class FullyShardedDataParallelRuntime[ModelT: nn.Module]:
     def __init__(
         self,
         model: ModelT,
@@ -52,15 +50,6 @@ class FullyShardedDataParallelEngine[ModelT: nn.Module]:
 
         if not dist.is_initialized():
             raise RuntimeError("FSDP2 requires torch.distributed initialization.")
-
-        if (
-            mixed_precision
-            and mixed_precision_dtype == torch.float16
-            and self.is_rank_zero
-        ):
-            Console.warning(
-                "FSDP2 does not support GradScaler. Float16 training may suffer from gradient underflow. Consider bfloat16 for safety, or implement manual gradient scaling if you have float16-specific requirements."
-            )
 
         # Configure FSDP2 Mixed Precision Policy
         fsdp_kwargs = {}
@@ -87,7 +76,7 @@ class FullyShardedDataParallelEngine[ModelT: nn.Module]:
         return self._device
 
     @property
-    def is_rank_zero(self) -> bool:
+    def is_main_process(self) -> bool:
         return self._global_rank == 0
 
     def autocast(self) -> ContextManager[object]:
@@ -100,7 +89,7 @@ class FullyShardedDataParallelEngine[ModelT: nn.Module]:
 
     def zero_gradients(self, optimizers: Iterable[Optimizer]) -> None:
         for optimizer in optimizers:
-            optimizer.zero_grad(set_to_none=True)
+            optimizer.zero_grad()
 
     def backward_pass(self, loss: Tensor) -> None:
         loss.backward()
@@ -113,6 +102,6 @@ class FullyShardedDataParallelEngine[ModelT: nn.Module]:
             optimizer.step()
         return True
 
-    def barrier(self) -> None:
+    def synchronize(self) -> None:
         if dist.is_initialized():
             dist.barrier()

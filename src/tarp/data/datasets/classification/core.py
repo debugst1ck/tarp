@@ -21,6 +21,7 @@ class ClassificationDataset(
         label_columns: Sequence[str],
         augmentation: Augmentation | None = None,
         maximum_sequence_length: int | None = 2048,
+        static_sequence_length: bool = True,
     ):
         super().__init__(
             source=source,
@@ -28,8 +29,9 @@ class ClassificationDataset(
             sequence_column=sequence_column,
             augmentation=augmentation,
             maximum_sequence_length=maximum_sequence_length,
+            static_sequence_length=static_sequence_length,
         )
-        self.label_columns = label_columns
+        self.label_columns: Sequence[str] = label_columns
 
     @override
     def transform(self, index: int, row: dict[str, str | float]) -> ClassificationBatch:

@@ -2,6 +2,7 @@ from collections.abc import Callable
 from typing import override
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn.attention.flex_attention import (
     and_masks,
@@ -144,3 +145,79 @@ class CausalSelfAttention(SelfAttention):
             score_mod_function=score_mod_function,
             mask_mod_function=composite_mask_mod,
         )
+
+
+class LegacySelfAttention(nn.Module):
+    """
+    Standard Self-Attention using F.scaled_dot_product_attention.
+    """
+
+    def __init__(
+        self,
+        model_dimension: int,
+        number_of_heads: int,
+        positional_encoder: TransformativePositionalEncoding | None = None,
+        bias: bool = False,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+        self.model_dimension = model_dimension
+        self.number_of_heads = number_of_heads
+        self.head_dimension = model_dimension // number_of_heads
+        self.dropout = dropout
+
+        self.positional_encoder = positional_encoder or NoPositionalEncoding()
+
+        self.qkv_projection = nn.Linear(model_dimension, 3 * model_dimension, bias=bias)
+        self.output_projection = nn.Linear(model_dimension, model_dimension, bias=bias)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        self.qkv_projection.reset_parameters()
+        self.output_projection.reset_parameters()
+
+    @override
+    def forward(
+        self,
+        query: Tensor,
+        key: Tensor | None = None,
+        value: Tensor | None = None,
+        *,
+        attention_mask: Tensor,
+        positions: Tensor | None = None,
+    ) -> Tensor:
+        batch_size, sequence_length, _ = query.size()
+
+        qkv = self.qkv_projection(query)
+        qkv = qkv.reshape(
+            batch_size, sequence_length, 3, self.number_of_heads, self.head_dimension
+        )
+        queries, keys, values = qkv.permute(2, 0, 3, 1, 4).unbind(0)  # [B, H, L, D_h]
+
+        positions = (
+            positions
+            if positions is not None
+            else torch.arange(sequence_length, device=query.device)
+            .unsqueeze(0)
+            .expand(batch_size, sequence_length)
+        )
+
+        queries = self.positional_encoder(queries, positions)
+        keys = self.positional_encoder(keys, positions)
+
+        headed_attention_mask = (attention_mask == 0).unsqueeze(1).unsqueeze(2)
+
+        attended = F.scaled_dot_product_attention(
+            queries,
+            keys,
+            values,
+            attn_mask=headed_attention_mask,
+            is_causal=False,
+            dropout_p=self.dropout if self.training else 0.0,
+        )  # [B, H, L, D_h]
+
+        attended = attended.transpose(1, 2).reshape(
+            batch_size, sequence_length, self.model_dimension
+        )
+        return self.output_projection(attended)

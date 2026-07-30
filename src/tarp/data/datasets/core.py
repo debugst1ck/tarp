@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 
 from tarp.data.sources.sequence import SequenceDataSource
 from tarp.functional.padding.sequence import blocked_pad_sequence, pad_to_length
-from tarp.preprocessing.augmentation.core import Augmentation
+from tarp.preprocessing.augmentation.core import Augmentation, NoAugmentation
 from tarp.preprocessing.tokenizers.core import Tokenizer
 from tarp.typed.core import KnownT
 
@@ -23,12 +23,12 @@ class SequenceDataset[RowT: Mapping[str, KnownT], BatchT](ABC, Dataset[BatchT]):
         maximum_sequence_length: int | None = 2048,
         static_sequence_length: bool = True,
     ):
-        self.source = source
-        self.tokenizer = tokenizer
-        self.augmentation = augmentation
-        self.sequence_column = sequence_column
-        self.maximum_sequence_length = maximum_sequence_length
-        self.padding_value = tokenizer.pad_token_id
+        self.source: SequenceDataSource[RowT] = source
+        self.tokenizer: Tokenizer = tokenizer
+        self.augmentation: Augmentation = augmentation or NoAugmentation()
+        self.sequence_column: str = sequence_column
+        self.maximum_sequence_length: int | None = maximum_sequence_length
+        self.padding_value: int = tokenizer.pad_token_id
 
         if static_sequence_length and maximum_sequence_length is not None:
             self.sequence_padding = partial(
@@ -57,11 +57,7 @@ class SequenceDataset[RowT: Mapping[str, KnownT], BatchT](ABC, Dataset[BatchT]):
         return [self.transform(index, row) for index, row in zip(indices, rows)]
 
     def preprocessing(self, sequence: str) -> tuple[Tensor, Tensor]:
-        sequence = (
-            self.augmentation.apply(sequence)
-            if self.augmentation is not None
-            else sequence
-        )
+        sequence = self.augmentation.apply(sequence)
         tokenized = self.tokenizer.encode(sequence)
         if self.maximum_sequence_length is not None:
             tokenized = tokenized[: self.maximum_sequence_length]

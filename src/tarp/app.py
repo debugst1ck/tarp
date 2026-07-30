@@ -4,6 +4,7 @@ from pathlib import Path
 import torch
 from torch import nn
 
+from odyssey import AcceleratedRuntime, Orchestrator, State
 from tarp.cli.core import Console
 from tarp.data.datasets.language.masked import PoissonSpanMaskingDataset
 from tarp.data.sources.sequence import GenomeSliceSource
@@ -11,10 +12,7 @@ from tarp.model.backbone.untrained.transformer import TransformerEncoder
 from tarp.model.layers.positional.rotational import CachedRotaryPositionalEncoding
 from tarp.model.tasks.language import LanguageModel
 from tarp.preprocessing.tokenizers.atomic.monomer import NucleotideTokenizer
-from tarp.training.engine.single import SingleDeviceEngine
 from tarp.training.objectives.language.masked import MaskedLanguageModelingObjective
-from tarp.training.orchestrator.core import Orchestrator
-from tarp.training.plugins.core import State
 from tarp.training.plugins.scheduling import BatchLearningScheduling
 
 
@@ -35,6 +33,7 @@ def main():
         tokenizer=dna_tokenizer,
         sequence_column="dna_sequence",
         maximum_sequence_length=1024,
+        static_sequence_length=False,
     )
 
     val_masked_language_dataset = PoissonSpanMaskingDataset(
@@ -51,6 +50,7 @@ def main():
         tokenizer=dna_tokenizer,
         sequence_column="dna_sequence",
         maximum_sequence_length=1024,
+        static_sequence_length=False,
     )
 
     embedding_dimension = 384
@@ -78,7 +78,7 @@ def main():
         vocabulary_size=dna_tokenizer.vocabulary_size,
     )
 
-    engine = SingleDeviceEngine(
+    engine = AcceleratedRuntime(
         model=language_model,
         mixed_precision=True,
         mixed_precision_dtype=torch.bfloat16
@@ -86,14 +86,14 @@ def main():
         else torch.float16,
     )
 
-    if engine.is_rank_zero == 0:
+    if engine.is_main_process == 0:
         Console.debug(
             f"Trainable parameters: {sum(p.numel() for p in encoder.parameters() if p.requires_grad):,}"
         )
 
     criterion = nn.CrossEntropyLoss(ignore_index=-100)
 
-    batch_size = 16
+    batch_size = 32
     accumulation_steps = 48
     epochs = 5
     learning_rate_adam = 2e-4
@@ -171,10 +171,16 @@ def main():
         accumulation_steps=accumulation_steps,
     )
 
+    if engine.is_main_process:
+        # Print the number of trainable parameters for the model
+        Console.debug(
+            f"Trainable parameters: {sum(p.numel() for p in engine.model.parameters() if p.requires_grad):,}"
+        )
+
     train_dataloader = torch.utils.data.DataLoader(
         train_masked_language_dataset,
         batch_size=batch_size,
-        num_workers=4,
+        num_workers=6,
         pin_memory=True,
         drop_last=True,
         collate_fn=train_masked_language_dataset.collate,
@@ -183,7 +189,7 @@ def main():
     val_dataloader = torch.utils.data.DataLoader(
         val_masked_language_dataset,
         batch_size=batch_size,
-        num_workers=4,
+        num_workers=6,
         pin_memory=True,
         drop_last=True,
         collate_fn=val_masked_language_dataset.collate,
@@ -192,12 +198,12 @@ def main():
     state = State()
 
     for epoch in range(epochs):
-        if engine.is_rank_zero:
+        if engine.is_main_process:
             Console.info(f"Epoch {epoch + 1}/{epochs}")
         state = orchestrator.run(
             dataloader=train_dataloader, state=state, is_training=True
         )
-        if engine.is_rank_zero:
+        if engine.is_main_process:
             Console.info(f"Validation after epoch {epoch + 1}/{epochs}")
         state = orchestrator.run(
             dataloader=val_dataloader, state=state, is_training=False

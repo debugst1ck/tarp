@@ -3,8 +3,7 @@ from typing import final, override
 
 from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 
-from tarp.training.objectives.core import Result
-from tarp.training.plugins.core import Plugin, State
+from odyssey import Plugin, Result, State
 
 
 @final

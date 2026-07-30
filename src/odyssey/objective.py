@@ -5,7 +5,8 @@ from torch import Tensor
 
 
 class Result(Protocol):
-    loss: Tensor
+    @property
+    def loss(self) -> Tensor: ...
 
 
 class Objective[ModelT, BatchT, ResultT: Result](Protocol):

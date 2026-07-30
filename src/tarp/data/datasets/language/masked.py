@@ -20,6 +20,7 @@ class MaskedLanguageDataset(SequenceDataset[dict[str, str], LanguageBatch]):
         augmentation: Augmentation | None = None,
         masking_probability: float = 0.15,
         maximum_sequence_length: int | None = 2048,
+        static_sequence_length: bool = True,
     ):
         super().__init__(
             source=source,
@@ -27,6 +28,7 @@ class MaskedLanguageDataset(SequenceDataset[dict[str, str], LanguageBatch]):
             sequence_column=sequence_column,
             augmentation=augmentation,
             maximum_sequence_length=maximum_sequence_length,
+            static_sequence_length=static_sequence_length,
         )
         self.masking_probability = masking_probability
 
@@ -114,6 +116,7 @@ class PoissonSpanMaskingDataset(MaskedLanguageDataset):
         masking_probability: float = 0.15,
         expected_span: float = 18.0,
         maximum_sequence_length: int | None = 2048,
+        static_sequence_length: bool = True,
     ):
         super().__init__(
             source=source,
@@ -122,8 +125,9 @@ class PoissonSpanMaskingDataset(MaskedLanguageDataset):
             augmentation=augmentation,
             masking_probability=masking_probability,
             maximum_sequence_length=maximum_sequence_length,
+            static_sequence_length=static_sequence_length,
         )
-        self.expected_span = expected_span
+        self.expected_span: float = expected_span
 
     @override
     def masking_positions(self, positions: Tensor) -> Tensor:

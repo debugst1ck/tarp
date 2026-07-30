@@ -35,14 +35,14 @@ def blocked_pad_sequence(
         dummy_shape, padding_value, dtype=first_tensor.dtype, device=first_tensor.device
     )
 
-    sequences.append(dummy_tensor)
+    # Make new sequences list with dummy tensor appended
+    dummy_sequences = sequences + [dummy_tensor]
     padded = pad_sequence(
-        sequences,
+        dummy_sequences,
         batch_first=batch_first,
         padding_value=padding_value,
         padding_side=padding_side,
     )
-    _ = sequences.pop()
 
     return padded[:-1] if batch_first else padded[:, :-1]
 
