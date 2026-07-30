@@ -99,7 +99,7 @@ class MaskedLanguageDataset(SequenceDataset[dict[str, str], LanguageBatch]):
             [item["attention_mask"] for item in batch],
         )
         padded_truths = self.sequence_padding(
-            [item["truth"] for item in batch], batch_first=True, padding_value=-100
+            [item["truth"] for item in batch], padding_value=-100
         )
         return LanguageBatch(
             sequence=sequences, attention_mask=masks, truth=padded_truths

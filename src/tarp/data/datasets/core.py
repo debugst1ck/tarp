@@ -69,11 +69,10 @@ class SequenceDataset[RowT: Mapping[str, KnownT], BatchT](ABC, Dataset[BatchT]):
     ) -> tuple[Tensor, Tensor]:
         padded_sequences = self.sequence_padding(
             list(sequences),
-            batch_first=True,
             padding_value=self.padding_value,
         )
         padded_attention_masks = self.sequence_padding(
-            list(attention_masks), batch_first=True, padding_value=0
+            list(attention_masks), padding_value=0
         )
         return padded_sequences, padded_attention_masks
 

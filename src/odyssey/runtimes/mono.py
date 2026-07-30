@@ -62,16 +62,22 @@ class AcceleratedRuntime[ModelT: nn.Module]:
             loss.backward()
 
     def step_optimizers(self, optimizers: Iterable[Optimizer], clipping: float) -> bool:
-        for optimizer in optimizers:
-            self.scaler.unscale_(optimizer)
+        if self.scaler.is_enabled():
+            for optimizer in optimizers:
+                self.scaler.unscale_(optimizer)
 
         if clipping > 0.0:
             _ = torch.nn.utils.clip_grad_norm_(self._model.parameters(), clipping)
 
         initial_scale = self.scaler.get_scale()
         for optimizer in optimizers:
-            _ = self.scaler.step(optimizer)
-        self.scaler.update()
+            if self.scaler.is_enabled():
+                _ = self.scaler.step(optimizer)
+            else:
+                optimizer.step()
+
+        if self.scaler.is_enabled():
+            self.scaler.update()
 
         return self.scaler.get_scale() >= initial_scale
 

@@ -2,7 +2,7 @@ import contextlib
 import os
 from collections.abc import Callable, Iterable
 from types import TracebackType
-from typing import ContextManager, final
+from typing import ContextManager, cast, final
 
 import torch
 import torch.distributed as dist
@@ -45,18 +45,16 @@ class FullyShardedDataParallelRuntime[ModelT: nn.Module]:
             f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu"
         )
 
-        # Move the base model to the GPU before sharding
         moved = model.to(self._device)
 
         if not dist.is_initialized():
             raise RuntimeError("FSDP2 requires torch.distributed initialization.")
 
-        # Configure FSDP2 Mixed Precision Policy
         fsdp_kwargs = {}
         if mixed_precision:
             fsdp_kwargs["mp_policy"] = MixedPrecisionPolicy(
                 param_dtype=mixed_precision_dtype,
-                reduce_dtype=torch.float32,  # Best practice: keep reductions in fp32 for accuracy
+                reduce_dtype=torch.float32,  # Stable
             )
 
         if sharding_filter is not None:
@@ -64,12 +62,11 @@ class FullyShardedDataParallelRuntime[ModelT: nn.Module]:
             for module in reversed(modules_to_shard):  # Leaf-first
                 _ = fully_shard(module, **fsdp_kwargs)
 
-        # 2. Shard the root model wrapper (Required by FSDP2)
         self._model = fully_shard(moved, **fsdp_kwargs)
 
     @property
     def model(self) -> ModelT:
-        return self._model
+        return cast(ModelT, cast(object, self._model))
 
     @property
     def device(self) -> torch.device:
@@ -80,8 +77,7 @@ class FullyShardedDataParallelRuntime[ModelT: nn.Module]:
         return self._global_rank == 0
 
     def autocast(self) -> ContextManager[object]:
-        # FSDP2 manages internal parameter casting natively via `mp_policy`.
-        # We return a nullcontext here to avoid redundant torch.amp.autocast overhead.
+        # FSDP2 handles mixed precision internally
         return contextlib.nullcontext()
 
     def no_sync(self) -> ContextManager[object]:
