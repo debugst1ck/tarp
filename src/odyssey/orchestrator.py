@@ -6,10 +6,9 @@ from torch import inference_mode, nn
 from torch.optim import Optimizer
 from tqdm.auto import tqdm
 
-from tarp.training.engine.core import Engine
-from tarp.training.objectives.core import Objective, Result
-from tarp.training.plugins.core import Plugin, State
-from tarp.typed.batch import SequenceBatch
+from odyssey.objective import Objective, Result
+from odyssey.plugin import Plugin, State
+from odyssey.runtimes.core import Runtime
 
 
 class BoundedIterable[T](Iterable[T], Sized, Protocol):
@@ -17,10 +16,10 @@ class BoundedIterable[T](Iterable[T], Sized, Protocol):
 
 
 @final
-class Orchestrator[ModelT: nn.Module, BatchT: SequenceBatch, ResultT: Result]:
+class Orchestrator[ModelT: nn.Module, BatchT, ResultT: Result]:
     def __init__(
         self,
-        engine: Engine[ModelT],
+        engine: Runtime[ModelT],
         objective: Objective[ModelT, BatchT, ResultT],
         optimizers: Iterable[Optimizer],
         plugins: Collection[Plugin[ResultT]] | None = None,
@@ -62,13 +61,14 @@ class Orchestrator[ModelT: nn.Module, BatchT: SequenceBatch, ResultT: Result]:
         is_training: bool = True,
     ) -> State:
         state.device = self.engine.device
+        state.is_main_process = self.engine.is_main_process
 
         for plugin in self.plugins:
             plugin.on_epoch_begin(state, is_training)
 
         _ = self.engine.model.train(is_training)
 
-        if is_training and state.local_accumulation_step == 0:
+        if is_training:
             self.engine.zero_gradients(optimizers=self.optimizers)
 
         total_batches = len(dataloader)
@@ -77,7 +77,7 @@ class Orchestrator[ModelT: nn.Module, BatchT: SequenceBatch, ResultT: Result]:
             dataloader,
             desc=f"{description} Epoch {state.epoch_index + 1}",
             total=total_batches,
-            disable=not self.engine.is_rank_zero,
+            disable=not self.engine.is_main_process,
         )
 
         context = inference_mode() if not is_training else nullcontext()
@@ -125,16 +125,16 @@ class Orchestrator[ModelT: nn.Module, BatchT: SequenceBatch, ResultT: Result]:
                         for plugin in self.plugins:
                             plugin.on_optimizer_step(state)
 
-                        if self.engine.is_rank_zero:
+                        if self.engine.is_main_process:
                             progress_bar.set_postfix(
-                                loss=f"{result.loss:.4f}",
+                                loss=f"{result.loss.item():.4f}",
                                 step=state.optimizer_step,
                             )
 
                     self.engine.zero_gradients(optimizers=self.optimizers)
 
         # Synchronize
-        self.engine.barrier()
+        self.engine.synchronize()
 
         for plugin in self.plugins:
             plugin.on_epoch_end(state, is_training)

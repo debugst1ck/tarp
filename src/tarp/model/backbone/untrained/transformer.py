@@ -4,7 +4,7 @@ from typing import Literal, final, overload, override
 from torch import Tensor, nn
 
 from tarp.model.backbone.core import Encoder
-from tarp.model.layers.attention.multihead import SelfAttention
+from tarp.model.layers.attention.multihead import LegacySelfAttention
 from tarp.model.layers.convolution.extraction import AdaptiveReceptiveField1D
 from tarp.model.layers.perceptron.gated import SwishGatedLinearUnitFeedForward
 from tarp.model.layers.pooling.atomic import GlobalAveragePooling1D
@@ -23,7 +23,7 @@ class TransformerEncoderLayerWithPositionalEncoding(nn.Module):
         bias: bool = False,
     ):
         super().__init__()
-        self.self_attention = SelfAttention(
+        self.self_attention = LegacySelfAttention(
             model_dimension=model_dimension,
             number_of_heads=number_of_heads,
             positional_encoder=positional_encoder,

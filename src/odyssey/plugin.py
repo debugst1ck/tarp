@@ -4,7 +4,7 @@ import torch
 from torch import Tensor
 from torcheval.metrics import Metric
 
-from tarp.training.objectives.core import Result
+from odyssey.objective import Result
 
 
 @dataclass(slots=True)
@@ -16,6 +16,7 @@ class State:
     optimizer_step: int = 0
     local_accumulation_step: int = 0
     should_stop: bool = False
+    is_main_process: bool = True
 
     accumulative_metrics: dict[str, tuple[Metric[Tensor], Tensor]] = field(
         default_factory=dict

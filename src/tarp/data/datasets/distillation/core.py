@@ -19,6 +19,7 @@ class CrossDistillationDataset(SequenceDataset[dict[str, str], DistillationBatch
         sequence_column: str,
         teacher_augmentation: Augmentation | None = None,
         maximum_sequence_length: int | None = 2048,
+        static_sequence_length: bool = True,
     ) -> None:
         super().__init__(
             source=teacher_source,
@@ -26,6 +27,7 @@ class CrossDistillationDataset(SequenceDataset[dict[str, str], DistillationBatch
             sequence_column=sequence_column,
             augmentation=teacher_augmentation,
             maximum_sequence_length=maximum_sequence_length,
+            static_sequence_length=static_sequence_length,
         )
         self.student_dataset = student_dataset
 

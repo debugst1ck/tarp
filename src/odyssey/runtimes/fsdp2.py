@@ -2,15 +2,13 @@ import contextlib
 import os
 from collections.abc import Callable, Iterable
 from types import TracebackType
-from typing import ContextManager, final
+from typing import ContextManager, cast, final
 
 import torch
 import torch.distributed as dist
 from torch import Tensor, nn
 from torch.distributed.fsdp import FSDPModule, MixedPrecisionPolicy, fully_shard
 from torch.optim import Optimizer
-
-from tarp.cli.core import Console
 
 
 @final
@@ -33,7 +31,7 @@ class FullyShardedDataParallel2NoSync:
 
 
 @final
-class FullyShardedDataParallelEngine[ModelT: nn.Module]:
+class FullyShardedDataParallelRuntime[ModelT: nn.Module]:
     def __init__(
         self,
         model: ModelT,
@@ -47,27 +45,16 @@ class FullyShardedDataParallelEngine[ModelT: nn.Module]:
             f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu"
         )
 
-        # Move the base model to the GPU before sharding
         moved = model.to(self._device)
 
         if not dist.is_initialized():
             raise RuntimeError("FSDP2 requires torch.distributed initialization.")
 
-        if (
-            mixed_precision
-            and mixed_precision_dtype == torch.float16
-            and self.is_rank_zero
-        ):
-            Console.warning(
-                "FSDP2 does not support GradScaler. Float16 training may suffer from gradient underflow. Consider bfloat16 for safety, or implement manual gradient scaling if you have float16-specific requirements."
-            )
-
-        # Configure FSDP2 Mixed Precision Policy
         fsdp_kwargs = {}
         if mixed_precision:
             fsdp_kwargs["mp_policy"] = MixedPrecisionPolicy(
                 param_dtype=mixed_precision_dtype,
-                reduce_dtype=torch.float32,  # Best practice: keep reductions in fp32 for accuracy
+                reduce_dtype=torch.float32,  # Stable
             )
 
         if sharding_filter is not None:
@@ -75,24 +62,22 @@ class FullyShardedDataParallelEngine[ModelT: nn.Module]:
             for module in reversed(modules_to_shard):  # Leaf-first
                 _ = fully_shard(module, **fsdp_kwargs)
 
-        # 2. Shard the root model wrapper (Required by FSDP2)
         self._model = fully_shard(moved, **fsdp_kwargs)
 
     @property
     def model(self) -> ModelT:
-        return self._model
+        return cast(ModelT, cast(object, self._model))
 
     @property
     def device(self) -> torch.device:
         return self._device
 
     @property
-    def is_rank_zero(self) -> bool:
+    def is_main_process(self) -> bool:
         return self._global_rank == 0
 
     def autocast(self) -> ContextManager[object]:
-        # FSDP2 manages internal parameter casting natively via `mp_policy`.
-        # We return a nullcontext here to avoid redundant torch.amp.autocast overhead.
+        # FSDP2 handles mixed precision internally
         return contextlib.nullcontext()
 
     def no_sync(self) -> ContextManager[object]:
@@ -100,7 +85,7 @@ class FullyShardedDataParallelEngine[ModelT: nn.Module]:
 
     def zero_gradients(self, optimizers: Iterable[Optimizer]) -> None:
         for optimizer in optimizers:
-            optimizer.zero_grad(set_to_none=True)
+            optimizer.zero_grad()
 
     def backward_pass(self, loss: Tensor) -> None:
         loss.backward()
@@ -113,6 +98,6 @@ class FullyShardedDataParallelEngine[ModelT: nn.Module]:
             optimizer.step()
         return True
 
-    def barrier(self) -> None:
+    def synchronize(self) -> None:
         if dist.is_initialized():
             dist.barrier()

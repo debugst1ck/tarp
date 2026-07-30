@@ -21,6 +21,7 @@ class CosineDiffusionMaskingDataset(SequenceDataset[dict[str, str], DiffusionBat
         masking_probability_maximum: float = 1.0,
         augmentation: Augmentation | None = None,
         maximum_sequence_length: int | None = 2048,
+        static_sequence_length: bool = True,
     ):
         super().__init__(
             source=source,
@@ -28,17 +29,19 @@ class CosineDiffusionMaskingDataset(SequenceDataset[dict[str, str], DiffusionBat
             sequence_column=sequence_column,
             augmentation=augmentation,
             maximum_sequence_length=maximum_sequence_length,
+            static_sequence_length=static_sequence_length,
         )
 
-        self.language_dataset = PoissonSpanMaskingDataset(
+        self.language_dataset: PoissonSpanMaskingDataset = PoissonSpanMaskingDataset(
             source=source,
             tokenizer=tokenizer,
             sequence_column=sequence_column,
             augmentation=augmentation,
             maximum_sequence_length=maximum_sequence_length,
+            static_sequence_length=static_sequence_length,
         )
-        self.masking_probability_minimum = masking_probability_minimum
-        self.masking_probability_maximum = masking_probability_maximum
+        self.masking_probability_minimum: float = masking_probability_minimum
+        self.masking_probability_maximum: float = masking_probability_maximum
 
     @override
     def transform(self, index: int, row: dict[str, str]) -> DiffusionBatch:

@@ -136,12 +136,9 @@ class CachedRotaryPositionalEncoding(RotaryPositionalEncoding):
         self,
         positions: Tensor,
     ) -> tuple[Tensor, Tensor]:
-        if positions.max() < self.cache_size:
-            return self.sine_cache[positions], self.cosine_cache[
-                positions
-            ]  # [B, L, R], [B, L, R]
-        frequencies = self.frequencies(positions.to(self.dtype))  # [B, L, R]
-        return frequencies.sin(), frequencies.cos()  # [B, L, R], [B, L, R]
+        return self.sine_cache[positions], self.cosine_cache[
+            positions
+        ]  # [B, L, R], [B, L, R]
 
 
 class ContinuousRotaryPositionalEncoding(RotaryPositionalEncoding):

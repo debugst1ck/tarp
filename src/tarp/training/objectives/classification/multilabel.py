@@ -4,13 +4,13 @@ from typing import final, override
 import torch
 from torch import Tensor, nn
 
+from odyssey import Objective
 from tarp.model.tasks.classification import ClassificationModel
-from tarp.training.objectives.core import Objective, Result
 from tarp.typed.batch import ClassificationBatch
 
 
 @dataclass(frozen=True)
-class ClassificationResults(Result):
+class ClassificationResults:
     loss: Tensor
     predictions: Tensor  # [B, C]
     targets: Tensor  # [B, C]
@@ -32,7 +32,7 @@ class MultiLabelClassificationObjective(
         labels = batch["labels"].to(device, non_blocking=True)
         return sequence, attention_mask, labels
 
-    @torch.compile
+    @torch.compile(mode="max-autotune-no-cudagraphs")
     def compute(
         self,
         model: ClassificationModel,
