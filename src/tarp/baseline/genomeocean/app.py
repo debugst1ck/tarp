@@ -10,15 +10,12 @@ from sklearn.neighbors import KNeighborsClassifier
 from torch import Tensor
 from torch.utils.data import DataLoader
 
+from odyssey import AcceleratedRuntime, Orchestrator, Plugin, State
 from tarp.data.datasets.classification.multilabel import MultiLabelClassificationDataset
 from tarp.data.sources.sequence import TabularSequenceSource
 from tarp.model.backbone.core import Encoder
 from tarp.model.backbone.pretrained.genomeocean import GenomeOceanEncoder
 from tarp.preprocessing.tokenizers.pretrained.genomeocean import GenomeOceanTokenizer
-from tarp.training.engine.single import SingleDeviceEngine
-from tarp.training.objectives.core import Result
-from tarp.training.orchestrator.core import Orchestrator
-from tarp.training.plugins.core import Plugin, State
 from tarp.typed.batch import ClassificationBatch
 
 
@@ -39,7 +36,7 @@ class EmbeddingExtractionObjective:
         labels = batch["labels"].to(device, non_blocking=True)
         return seq, mask, labels
 
-    @torch.compile
+    @torch.compile(mode="max-autotune-no-cudagraphs")
     def compute(
         self, model: Encoder, seq: Tensor, mask: Tensor, labels: Tensor
     ) -> ExtractionResult:
@@ -57,28 +54,6 @@ class EmbeddingExtractionObjective:
     ) -> ExtractionResult:
         seq, mask, labels = self.preprocess(batch, device)
         return self.compute(model, seq, mask, labels)
-
-
-class EmbeddingAccumulatorPlugin(Plugin[ExtractionResult]):
-    def __init__(self) -> None:
-        self.embeddings: list[np.ndarray] = []
-        self.labels: list[np.ndarray] = []
-
-    @override
-    def on_epoch_begin(self, state: State, is_training: bool) -> None:
-        self.embeddings.clear()
-        self.labels.clear()
-
-    @override
-    def on_batch_end(
-        self, state: State, result: ExtractionResult, is_training: bool
-    ) -> None:
-        # Move to host memory and cast to numpy arrays
-        self.embeddings.append(result.embedding.cpu().numpy())
-        self.labels.append(result.labels.cpu().numpy())
-
-    def get_dataset(self) -> tuple[np.ndarray, np.ndarray]:
-        return np.vstack(self.embeddings), np.vstack(self.labels)
 
 
 class EmbeddingAccumulatorPlugin(Plugin[ExtractionResult]):
@@ -153,7 +128,7 @@ def main():
 
     accumulator = EmbeddingAccumulatorPlugin()
     orchestrator = Orchestrator(
-        engine=SingleDeviceEngine(model=encoder),
+        engine=AcceleratedRuntime(model=encoder),
         objective=EmbeddingExtractionObjective(),
         optimizers=(),  # Null iterable passed: no optimization steps occur
         plugins=(accumulator,),

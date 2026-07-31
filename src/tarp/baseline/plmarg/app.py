@@ -10,14 +10,12 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 from xgboost import XGBClassifier
 
+from odyssey import AcceleratedRuntime, Orchestrator, Plugin, State
 from tarp.data.datasets.classification.multilabel import MultiLabelClassificationDataset
 from tarp.data.sources.sequence import TabularSequenceSource
 from tarp.model.backbone.core import Encoder
 from tarp.model.backbone.pretrained.esm1b import Esm1bEncoder
 from tarp.preprocessing.tokenizers.pretrained.esm1b import Esm1bTokenizer
-from tarp.training.engine.single import SingleDeviceEngine
-from tarp.training.orchestrator.core import Orchestrator
-from tarp.training.plugins.core import Plugin, State
 from tarp.typed.batch import ClassificationBatch
 
 
@@ -38,7 +36,7 @@ class EmbeddingExtractionObjective:
         labels = batch["labels"].to(device, non_blocking=True)
         return seq, mask, labels
 
-    @torch.compile
+    @torch.compile(mode="max-autotune-no-cudagraphs")
     def compute(
         self, model: Encoder, seq: Tensor, mask: Tensor, labels: Tensor
     ) -> ExtractionResult:
@@ -83,7 +81,7 @@ class EmbeddingAccumulatorPlugin(Plugin[ExtractionResult]):
 def main():
     tokenizer = Esm1bTokenizer()
     encoder = Esm1bEncoder().freeze()
-    engine = SingleDeviceEngine(encoder)
+    engine = AcceleratedRuntime(encoder)
 
     torch.set_float32_matmul_precision("high")
 
