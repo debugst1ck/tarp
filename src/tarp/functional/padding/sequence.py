@@ -13,7 +13,7 @@ def blocked_pad_sequence(
     Pads a list of variable-length sequences to the nearest multiple of `block_size`.
     :param list[Tensor] sequences: List of variable-length sequences (1D or 2D tensors).
     :param float padding_value: Value to use for padding.
-    :param int block_size: Block size to pad to (default: 128). Aligns to CUDA warp size for efficiency.
+    :param int block_size: Block size to pad to (default: 128). By default, aligns to CUDA warp size for efficiency.
     :return Tensor: A tensor of shape [B, L, ...] where L is the nearest multiple of `block_size` greater than or equal to the maximum sequence length.
     """
     if not sequences:
@@ -33,7 +33,7 @@ def blocked_pad_sequence(
     if pad_amount == 0:
         return padded
 
-    return F.pad(padded, (0, 0, 0, pad_amount), value=padding_value)
+    return F.pad(padded, (0, pad_amount, 0, 0), value=padding_value)
 
 
 def pad_to_length(
@@ -65,4 +65,4 @@ def pad_to_length(
     if pad_amount == 0:
         return padded
 
-    return F.pad(padded, (0, 0, 0, pad_amount), value=padding_value)
+    return F.pad(padded, (0, pad_amount, 0, 0), value=padding_value)
