@@ -1,6 +1,6 @@
 import os
 from collections.abc import Iterable
-from typing import ContextManager, final
+from typing import ContextManager, cast, final
 
 import torch
 import torch.distributed as dist
@@ -21,21 +21,35 @@ class DistributedDataParallelRuntime[ModelT: nn.Module]:
         local_rank = int(os.getenv("LOCAL_RANK", "0"))
         self._global_rank = dist.get_rank() if dist.is_initialized() else 0
 
-        self._device = torch.device(
-            f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu"
-        )
+        if torch.accelerator.is_available():
+            torch.accelerator.set_device_index(local_rank)
+            acc = torch.accelerator.current_accelerator()
+
+            if acc is not None:
+                self._device = torch.device(f"{acc.type}:{local_rank}")
+            else:
+                self._device = torch.device("cpu")
+        else:
+            self._device = torch.device("cpu")
 
         moved = model.to(self._device)
 
         if dist.is_initialized():
+            # Gloo or CPU runtimes require device_ids=None to sync safely
+            backend = dist.get_backend()
+            if self._device.type == "cpu" or backend == "gloo":
+                device_ids = None
+            else:
+                device_ids = [local_rank]
+
             self._model = DDP(
                 moved,
-                device_ids=[local_rank] if self._device.type == "cuda" else None,
+                device_ids=device_ids,
                 find_unused_parameters=find_unused_parameters,
             )
         else:
             raise RuntimeError(
-                "DistributedDataParallelEngine requires torch.distributed to be initialized."
+                "DistributedDataParallelRuntime requires torch.distributed to be initialized."
             )
 
         self.mixed_precision_dtype = mixed_precision_dtype
@@ -58,15 +72,14 @@ class DistributedDataParallelRuntime[ModelT: nn.Module]:
         return self._global_rank == 0
 
     def autocast(self) -> ContextManager[object]:
-        device_type = "cuda" if self._device.type == "cuda" else "cpu"
         return torch.amp.autocast(
-            device_type=device_type,
+            device_type=self._device.type,
             dtype=self.mixed_precision_dtype,
             enabled=self.mixed_precision,
         )
 
     def no_sync(self) -> ContextManager[object]:
-        return self.model.no_sync()
+        return self._model.no_sync()
 
     def zero_gradients(self, optimizers: Iterable[Optimizer]) -> None:
         for optimizer in optimizers:

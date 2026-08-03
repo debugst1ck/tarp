@@ -75,7 +75,7 @@ class Orchestrator[ModelT: nn.Module, BatchT, ResultT: Result]:
         description = "Training" if is_training else "Evaluating"
         progress_bar = tqdm(
             dataloader,
-            desc=f"{description} Epoch {state.epoch_index + 1}",
+            desc=f"{description} E{state.epoch_index + 1}",
             total=total_batches,
             disable=not self.engine.is_main_process,
         )

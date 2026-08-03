@@ -10,7 +10,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 from xgboost import XGBClassifier
 
-from odyssey import AcceleratedRuntime, Orchestrator, Plugin, State
+from odyssey import MonoRuntime, Orchestrator, Plugin, State
 from tarp.data.datasets.classification.multilabel import MultiLabelClassificationDataset
 from tarp.data.sources.sequence import TabularSequenceSource
 from tarp.model.backbone.core import Encoder
@@ -81,7 +81,7 @@ class EmbeddingAccumulatorPlugin(Plugin[ExtractionResult]):
 def main():
     tokenizer = Esm1bTokenizer()
     encoder = Esm1bEncoder().freeze()
-    engine = AcceleratedRuntime(encoder)
+    engine = MonoRuntime(encoder)
 
     torch.set_float32_matmul_precision("high")
 

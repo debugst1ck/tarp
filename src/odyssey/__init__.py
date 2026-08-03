@@ -1,14 +1,14 @@
-from odyssey.objective import Objective, Result
-from odyssey.orchestrator import Orchestrator
-from odyssey.plugin import Plugin, State
-from odyssey.runtimes.core import Runtime
-from odyssey.runtimes.ddp import DistributedDataParallelRuntime
-from odyssey.runtimes.fsdp2 import FullyShardedDataParallelRuntime
-from odyssey.runtimes.mono import AcceleratedRuntime
+from .objective import Objective, Result
+from .orchestrator import Orchestrator
+from .plugin import Plugin, State
+from .runtimes.core import Runtime
+from .runtimes.ddp import DistributedDataParallelRuntime
+from .runtimes.fsdp2 import FullyShardedDataParallelRuntime
+from .runtimes.mono import MonoRuntime
 
 __all__ = [
     "Runtime",
-    "AcceleratedRuntime",
+    "MonoRuntime",
     "DistributedDataParallelRuntime",
     "FullyShardedDataParallelRuntime",
     "Objective",

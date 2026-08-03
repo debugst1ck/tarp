@@ -1,10 +1,12 @@
 import math
+import os
 from pathlib import Path
 
 import torch
+from torch import distributed as dist
 from torch import nn
 
-from odyssey import AcceleratedRuntime, Orchestrator, State
+from odyssey import DistributedDataParallelRuntime, MonoRuntime, Orchestrator, State
 from tarp.cli.core import Console
 from tarp.data.datasets.language.masked import PoissonSpanMaskingDataset
 from tarp.data.sources.sequence import GenomeSliceSource
@@ -17,6 +19,11 @@ from tarp.training.plugins.scheduling import BatchLearningScheduling
 
 
 def main():
+    if not dist.is_initialized():
+        dist.init_process_group(backend="gloo")
+
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
+
     dna_tokenizer = NucleotideTokenizer()
 
     train_masked_language_dataset = PoissonSpanMaskingDataset(
@@ -78,40 +85,44 @@ def main():
         vocabulary_size=dna_tokenizer.vocabulary_size,
     )
 
-    engine = AcceleratedRuntime(
+    engine = DistributedDataParallelRuntime(
         model=language_model,
         mixed_precision=True,
         mixed_precision_dtype=torch.bfloat16
-        if torch.cuda.is_bf16_supported()
+        if torch.accelerator.is_available() and torch.cuda.is_bf16_supported()
         else torch.float16,
     )
 
-    if engine.is_main_process == 0:
+    if engine.is_main_process:
         Console.debug(
             f"Trainable parameters: {sum(p.numel() for p in encoder.parameters() if p.requires_grad):,}"
         )
 
     criterion = nn.CrossEntropyLoss(ignore_index=-100)
 
-    batch_size = 32
-    accumulation_steps = 32
+    batch_size = 16
+    accumulation_steps = 48
     epochs = 5
     learning_rate_adam = 2e-4
     learning_rate_muon = 0.02
 
     steps_per_epoch = math.ceil(
-        len(train_masked_language_dataset) / (batch_size * accumulation_steps)
+        len(train_masked_language_dataset)
+        / (batch_size * accumulation_steps * world_size)
     )
     total_steps = steps_per_epoch * epochs
     warmup_steps = total_steps // 10  # Warmup for the first 10% of training
 
-    muon_parameters = {
-        p for p in engine.model.encoder.parameters() if p.ndim == 2 and p.requires_grad
-    }
+    muon_parameters = set()
+    adamw_parameters = set()
 
-    adamw_parameters = {
-        p for p in engine.model.encoder.parameters() if p.ndim != 2 and p.requires_grad
-    }
+    for name, param in engine.model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if "module.encoder" in name and param.ndim == 2:
+            muon_parameters.add(param)
+        else:
+            adamw_parameters.add(param)
 
     adamw_parameters.update(
         p
@@ -172,17 +183,32 @@ def main():
     )
 
     if engine.is_main_process:
-        # Print the number of trainable parameters for the model
         Console.debug(
             f"Trainable parameters: {sum(p.numel() for p in engine.model.parameters() if p.requires_grad):,}"
         )
+
+    train_sampler = torch.utils.data.DistributedSampler(
+        train_masked_language_dataset,
+        num_replicas=world_size,
+        rank=dist.get_rank(),
+        shuffle=True,
+        drop_last=True,
+    )
+
+    val_sampler = torch.utils.data.DistributedSampler(
+        val_masked_language_dataset,
+        num_replicas=world_size,
+        rank=dist.get_rank(),
+        shuffle=False,
+        drop_last=True,
+    )
 
     train_dataloader = torch.utils.data.DataLoader(
         train_masked_language_dataset,
         batch_size=batch_size,
         num_workers=6,
+        sampler=train_sampler,
         pin_memory=True,
-        drop_last=True,
         collate_fn=train_masked_language_dataset.collate,
     )
 
@@ -190,24 +216,30 @@ def main():
         val_masked_language_dataset,
         batch_size=batch_size,
         num_workers=6,
+        sampler=val_sampler,
         pin_memory=True,
-        drop_last=True,
         collate_fn=val_masked_language_dataset.collate,
     )
 
     state = State()
 
     for epoch in range(epochs):
+        train_sampler.set_epoch(epoch)
         if engine.is_main_process:
             Console.info(f"Epoch {epoch + 1}/{epochs}")
         state = orchestrator.run(
             dataloader=train_dataloader, state=state, is_training=True
         )
+
+        val_sampler.set_epoch(epoch)
         if engine.is_main_process:
             Console.info(f"Validation after epoch {epoch + 1}/{epochs}")
         state = orchestrator.run(
             dataloader=val_dataloader, state=state, is_training=False
         )
+
+    if dist.is_initialized():
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

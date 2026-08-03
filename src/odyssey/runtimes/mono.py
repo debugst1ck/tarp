@@ -8,7 +8,7 @@ from torch.optim import Optimizer
 
 
 @final
-class AcceleratedRuntime[ModelT: nn.Module]:
+class MonoRuntime[ModelT: nn.Module]:
     def __init__(
         self,
         model: ModelT,
