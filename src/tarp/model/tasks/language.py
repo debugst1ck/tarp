@@ -23,12 +23,9 @@ class LanguageModel(nn.Module):
             vocabulary_size,
             bias=bias,
         )
-        if (
-            isinstance(self.embedding, nn.Embedding)
-            and self.embedding.weight.shape == self.language_head.weight.shape
-        ):
-            self.language_head.weight = self.embedding.weight
-            Console.warning("Tied language head weights to encoder embedding weights.")
+
+        # Tied embeddings are highly anisotropic (0.078 vs 0.996 for untied inputs).
+        # Untied models learn near-orthogonal input and output representations.
 
     @override
     def forward(
