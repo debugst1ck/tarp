@@ -206,13 +206,11 @@ class LegacySelfAttention(nn.Module):
         queries = self.positional_encoder(queries, positions)
         keys = self.positional_encoder(keys, positions)
 
-        headed_attention_mask = (attention_mask == 0).unsqueeze(1).unsqueeze(2)
-
         attended = F.scaled_dot_product_attention(
             queries,
             keys,
             values,
-            attn_mask=headed_attention_mask,
+            attn_mask=attention_mask.unsqueeze(1).unsqueeze(2),
             is_causal=False,
             dropout_p=self.dropout if self.training else 0.0,
         )  # [B, H, L, D_h]
