@@ -1,6 +1,6 @@
 #!/bin/bash -l
 #PBS -N TARP
-#PBS -l select=1:ncpus=8:ngpus=1:mem=32gb
+#PBS -l select=1:ncpus=8:ngpus=2:mem=32gb
 #PBS -l walltime=24:00:00
 #PBS -m abe
 #PBS -j oe
