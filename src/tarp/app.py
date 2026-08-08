@@ -1,12 +1,11 @@
 import math
-import os
 from pathlib import Path
 
 import torch
 from torch import distributed as dist
 from torch import nn
 
-from odyssey import DistributedDataParallelRuntime, MonoRuntime, Orchestrator, State
+from odyssey import DistributedDataParallelRuntime, Orchestrator, State
 from tarp.cli.core import Console
 from tarp.data.datasets.language.masked import PoissonSpanMaskingDataset
 from tarp.data.sources.sequence import GenomeSliceSource
@@ -15,7 +14,9 @@ from tarp.model.layers.positional.rotational import CachedRotaryPositionalEncodi
 from tarp.model.tasks.language import LanguageModel
 from tarp.preprocessing.tokenizers.atomic.monomer import NucleotideTokenizer
 from tarp.training.objectives.language.masked import MaskedLanguageModelingObjective
+from tarp.training.plugins.checkpointing import CheckpointOnEnd
 from tarp.training.plugins.scheduling import BatchLearningScheduling
+from tarp.training.plugins.tui import ProgressBar
 
 
 def main():
@@ -39,7 +40,7 @@ def main():
         ),
         tokenizer=dna_tokenizer,
         sequence_column="dna_sequence",
-        maximum_sequence_length=1024,
+        maximum_sequence_length=1536,
         static_sequence_length=False,
     )
 
@@ -56,7 +57,7 @@ def main():
         ),
         tokenizer=dna_tokenizer,
         sequence_column="dna_sequence",
-        maximum_sequence_length=1024,
+        maximum_sequence_length=1536,
         static_sequence_length=False,
     )
 
@@ -75,10 +76,6 @@ def main():
         padding_idx=dna_tokenizer.pad_token_id,
     )
 
-    _ = nn.init.normal_(
-        dna_embedding.weight, mean=0.0, std=1 / math.sqrt(embedding_dimension)
-    )
-
     language_model = LanguageModel(
         encoder=encoder,
         embedding=dna_embedding,
@@ -93,99 +90,13 @@ def main():
         else torch.float16,
     )
 
-    if engine.is_main_process:
-        Console.debug(
-            f"Trainable parameters: {sum(p.numel() for p in encoder.parameters() if p.requires_grad):,}"
-        )
-
     criterion = nn.CrossEntropyLoss(ignore_index=-100)
 
     batch_size = 16
     accumulation_steps = 48
     epochs = 5
-    learning_rate_adam = 2e-4
+    learning_rate_adam = 3e-4
     learning_rate_muon = 0.02
-
-    steps_per_epoch = math.ceil(
-        len(train_masked_language_dataset)
-        / (batch_size * accumulation_steps * world_size)
-    )
-    total_steps = steps_per_epoch * epochs
-    warmup_steps = total_steps // 10  # Warmup for the first 10% of training
-
-    muon_parameters = set()
-    adamw_parameters = set()
-
-    for name, param in engine.model.named_parameters():
-        if not param.requires_grad:
-            continue
-        if "module.encoder" in name and param.ndim == 2:
-            muon_parameters.add(param)
-        else:
-            adamw_parameters.add(param)
-
-    adamw_parameters.update(
-        p
-        for p in engine.model.parameters()
-        if p not in muon_parameters and p.requires_grad
-    )
-
-    adamw = torch.optim.AdamW(
-        params=adamw_parameters,
-        lr=learning_rate_adam,
-    )
-
-    muon = torch.optim.Muon(
-        params=muon_parameters,
-        lr=learning_rate_muon,
-    )
-
-    adam_scheduler = torch.optim.lr_scheduler.SequentialLR(
-        adamw,
-        schedulers=[
-            torch.optim.lr_scheduler.LinearLR(
-                adamw, start_factor=0.01, total_iters=warmup_steps
-            ),
-            torch.optim.lr_scheduler.CosineAnnealingLR(
-                adamw,
-                T_max=total_steps - warmup_steps,
-                eta_min=learning_rate_adam * 0.1,
-            ),
-        ],
-        milestones=[warmup_steps],
-    )
-
-    muon_scheduler = torch.optim.lr_scheduler.SequentialLR(
-        muon,
-        schedulers=[
-            torch.optim.lr_scheduler.LinearLR(
-                muon, start_factor=0.01, total_iters=warmup_steps
-            ),
-            torch.optim.lr_scheduler.CosineAnnealingLR(
-                muon, T_max=total_steps - warmup_steps, eta_min=learning_rate_muon * 0.1
-            ),
-        ],
-        milestones=[warmup_steps],
-    )
-
-    orchestrator = Orchestrator(
-        engine=engine,
-        objective=MaskedLanguageModelingObjective(
-            criterion=criterion,
-        ),
-        optimizers=(adamw, muon),
-        plugins=[
-            BatchLearningScheduling(
-                schedulers=(adam_scheduler, muon_scheduler),
-            ),
-        ],
-        accumulation_steps=accumulation_steps,
-    )
-
-    if engine.is_main_process:
-        Console.debug(
-            f"Trainable parameters: {sum(p.numel() for p in engine.model.parameters() if p.requires_grad):,}"
-        )
 
     train_sampler = torch.utils.data.DistributedSampler(
         train_masked_language_dataset,
@@ -221,17 +132,90 @@ def main():
         collate_fn=val_masked_language_dataset.collate,
     )
 
+    batches_per_epoch = len(train_dataloader)
+    steps_per_epoch = math.ceil(batches_per_epoch / accumulation_steps)
+
+    total_steps = steps_per_epoch * epochs
+    warmup_steps = max(1, total_steps // 10)
+
+    muon_parameters: list[nn.Parameter] = []
+    adam_parameters: list[nn.Parameter] = []
+
+    for name, param in engine.model.named_parameters():
+        if not param.requires_grad:
+            continue
+
+        if "encoder" in name and param.ndim == 2:
+            muon_parameters.append(param)
+        else:
+            adam_parameters.append(param)
+
+    adam = torch.optim.AdamW(
+        params=adam_parameters,
+        lr=learning_rate_adam,
+    )
+
+    muon = torch.optim.Muon(
+        params=muon_parameters,
+        lr=learning_rate_muon,
+    )
+
+    adam_scheduler = torch.optim.lr_scheduler.SequentialLR(
+        adam,
+        schedulers=[
+            torch.optim.lr_scheduler.LinearLR(
+                adam, start_factor=0.01, total_iters=warmup_steps
+            ),
+            torch.optim.lr_scheduler.CosineAnnealingLR(
+                adam, T_max=total_steps - warmup_steps, eta_min=learning_rate_adam * 0.1
+            ),
+        ],
+        milestones=[warmup_steps],
+    )
+
+    muon_scheduler = torch.optim.lr_scheduler.SequentialLR(
+        muon,
+        schedulers=[
+            torch.optim.lr_scheduler.LinearLR(
+                muon, start_factor=0.01, total_iters=warmup_steps
+            ),
+            torch.optim.lr_scheduler.CosineAnnealingLR(
+                muon, T_max=total_steps - warmup_steps, eta_min=learning_rate_muon * 0.1
+            ),
+        ],
+        milestones=[warmup_steps],
+    )
+
+    orchestrator = Orchestrator(
+        runtime=engine,
+        objective=MaskedLanguageModelingObjective(
+            criterion=criterion,
+        ),
+        optimizers=(adam, muon),
+        plugins=[
+            BatchLearningScheduling(schedulers=(adam_scheduler, muon_scheduler)),
+            CheckpointOnEnd(path=Path("temp/checkpoints/checkpoint_lm.safetensors")),
+            ProgressBar(),
+        ],
+        accumulation_steps=accumulation_steps,
+    )
+
+    if engine.is_main_process:
+        Console.debug(
+            f"Trainable parameters: {sum(p.numel() for p in engine.model.parameters() if p.requires_grad):,}"
+        )
+
     state = State()
 
     for epoch in range(epochs):
         train_sampler.set_epoch(epoch)
+        val_sampler.set_epoch(epoch)
+
         if engine.is_main_process:
-            Console.info(f"Epoch {epoch + 1}/{epochs}")
+            Console.info(f"Training Epoch {epoch + 1}/{epochs}")
         state = orchestrator.run(
             dataloader=train_dataloader, state=state, is_training=True
         )
-
-        val_sampler.set_epoch(epoch)
         if engine.is_main_process:
             Console.info(f"Validation after epoch {epoch + 1}/{epochs}")
         state = orchestrator.run(

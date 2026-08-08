@@ -1,8 +1,11 @@
 import contextlib
 from collections.abc import Iterable
+from pathlib import Path
+from threading import Thread
 from typing import ContextManager, cast, final
 
 import torch
+from safetensors.torch import save_file, save_model
 from torch import Tensor, nn
 from torch.optim import Optimizer
 
@@ -83,3 +86,19 @@ class MonoRuntime[ModelT: nn.Module]:
 
     def synchronize(self) -> None:
         torch.accelerator.synchronize(self.device)
+
+    def checkpoint(self, path: Path, asynchronously: bool = False) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        if asynchronously:
+            self.synchronize()
+            state_snapshot = {
+                k: v.cpu().detach().clone().contiguous()
+                for k, v in self.model.state_dict().items()
+            }
+            thread = Thread(
+                target=save_file, args=(state_snapshot, path.as_posix()), daemon=True
+            )
+            thread.start()
+        else:
+            save_model(self.model, path.as_posix())

@@ -7,10 +7,10 @@ import polars as pl
 import torch
 from sklearn.metrics import classification_report
 from sklearn.neighbors import KNeighborsClassifier
-from torch import Tensor
+from torch import Tensor, nn
 from torch.utils.data import DataLoader
 
-from odyssey import MonoRuntime, Orchestrator, Plugin, State
+from odyssey import MonoRuntime, Orchestrator, Plugin, RuntimeHandle, State
 from tarp.data.datasets.classification.multilabel import MultiLabelClassificationDataset
 from tarp.data.sources.sequence import TabularSequenceSource
 from tarp.model.backbone.core import Encoder
@@ -62,13 +62,19 @@ class EmbeddingAccumulatorPlugin(Plugin[ExtractionResult]):
         self.labels: list[np.ndarray] = []
 
     @override
-    def on_epoch_begin(self, state: State, is_training: bool) -> None:
+    def on_epoch_begin(
+        self, state: State, is_training: bool, size: int, runtime: RuntimeHandle
+    ) -> None:
         self.embeddings.clear()
         self.labels.clear()
 
     @override
     def on_batch_end(
-        self, state: State, result: ExtractionResult, is_training: bool
+        self,
+        state: State,
+        result: ExtractionResult,
+        is_training: bool,
+        runtime: RuntimeHandle,
     ) -> None:
         # Move to host memory and cast to numpy arrays
         self.embeddings.append(result.embedding.cpu().numpy())
@@ -128,7 +134,7 @@ def main():
 
     accumulator = EmbeddingAccumulatorPlugin()
     orchestrator = Orchestrator(
-        engine=MonoRuntime(model=encoder),
+        runtime=MonoRuntime(model=encoder),
         objective=EmbeddingExtractionObjective(),
         optimizers=(),  # Null iterable passed: no optimization steps occur
         plugins=(accumulator,),

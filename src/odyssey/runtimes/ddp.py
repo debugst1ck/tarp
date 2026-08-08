@@ -1,9 +1,12 @@
 import os
 from collections.abc import Iterable
+from pathlib import Path
+from threading import Thread
 from typing import ContextManager, cast, final
 
 import torch
 import torch.distributed as dist
+from safetensors.torch import save_file, save_model
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
@@ -60,8 +63,8 @@ class DistributedDataParallelRuntime[ModelT: nn.Module]:
         self.scaler = torch.amp.GradScaler(enabled=use_scaler)
 
     @property
-    def model(self) -> DDP:
-        return self._model
+    def model(self) -> ModelT:
+        return cast(ModelT, self._model.module)
 
     @property
     def device(self) -> torch.device:
@@ -111,3 +114,19 @@ class DistributedDataParallelRuntime[ModelT: nn.Module]:
     def synchronize(self) -> None:
         if dist.is_initialized():
             dist.barrier()
+
+    def checkpoint(self, path: Path, asynchronously: bool = False) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        if asynchronously:
+            self.synchronize()
+            state_snapshot = {
+                k: v.cpu().detach().clone().contiguous()
+                for k, v in self.model.state_dict().items()
+            }
+            thread = Thread(
+                target=save_file, args=(state_snapshot, path.as_posix()), daemon=True
+            )
+            thread.start()
+        else:
+            save_model(self.model, path.as_posix())

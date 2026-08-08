@@ -5,7 +5,6 @@ from torch import Tensor, nn
 
 from tarp.model.backbone.core import Encoder
 from tarp.model.layers.attention.multihead import LegacySelfAttention
-from tarp.model.layers.convolution.extraction import AdaptiveReceptiveField1D
 from tarp.model.layers.perceptron.gated import SwishGatedLinearUnitFeedForward
 from tarp.model.layers.pooling.atomic import GlobalAveragePooling1D
 from tarp.model.layers.positional.core import TransformativePositionalEncoding
@@ -74,11 +73,6 @@ class TransformerEncoder(Encoder):
     ):
         super().__init__()
         self.model_dimension = model_dimension
-        self.feature_extraction = AdaptiveReceptiveField1D(
-            model_dimension=model_dimension,
-            kernel_sizes=(3, 7, 11, 15, 21),
-            bias=bias,
-        )
         self.layers = nn.ModuleList(
             [
                 TransformerEncoderLayerWithPositionalEncoding(
@@ -122,9 +116,7 @@ class TransformerEncoder(Encoder):
         positions: Tensor | None = None,
         mode: Literal["sequence", "pooled", "both"],
     ) -> tuple[Tensor, Tensor | None] | tuple[Tensor, Tensor, Tensor | None]:
-        features = self.feature_extraction(
-            sequence_embeddings, attention_mask=attention_mask
-        )
+        features = sequence_embeddings
         for layer in self.layers:
             features = layer(
                 features,
