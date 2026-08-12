@@ -23,7 +23,7 @@ dependencies = [
     "safetensors",              # Safe and efficient model storage
     "torcheval",                # PyTorch model evaluation
     "iterative-stratification", # Multilabel classification utilities
-    "xgboost",                  # Quick classification
+    "pydantic-settings",        # Settings management
 ]
 
 [project.scripts]
@@ -33,8 +33,8 @@ tarp = "tarp.app:main"
 package = true
 
 [project.urls]
-Repository = "https://github.com/debugst1ck/TARP"
-Issues = "https://github.com/debugst1ck/TARP/issues"
+repository = "https://github.com/debugst1ck/tarp"
+issues = "https://github.com/debugst1ck/tarp/issues"
 
 [[tool.uv.index]]
 name = "pytorch-cu130"
@@ -69,11 +69,13 @@ addopts = "--maxfail=5"
 
 [tool.basedpyright]
 reportMissingTypeStubs = false
+venvPath = "."
+venv = ".venv"
+extraPaths = ["src"]
 exclude = [
-    ".git",
-    "__pycache__/",
-    "*.egg-info/",
-    "*.py[cod]",
-    ".venv",
-    "temp/data/external/sequences/",
+    "temp/data/external/nucleotides/",
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

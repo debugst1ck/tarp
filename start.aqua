@@ -1,16 +1,17 @@
 #!/bin/bash -l
 #PBS -N TARP
-#PBS -l select=1:ncpus=8:ngpus=2:mem=32gb
+#PBS -l select=1:ncpus=8:ngpus=2:mem=32gb:gpu_id=H100
 #PBS -l walltime=24:00:00
 #PBS -m abe
 #PBS -j oe
 
 # Load the necessary environment
-cd $HOME/Mainframe/tarp
+cd $HOME/Projects/tarp
 
-# Tell git to update the project to latest
+# Activate the virtual environment
 uv sync
 
+# Run the TARP application using torchrun with 2 GPUs
 uv run torchrun --nproc-per-node=2 -m tarp.app
 
 echo "Job completed."

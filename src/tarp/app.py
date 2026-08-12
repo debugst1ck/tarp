@@ -21,17 +21,17 @@ from tarp.training.plugins.tui import ProgressBar
 
 def main():
     if not dist.is_initialized():
-        dist.init_process_group(backend="gloo")
+        dist.init_process_group(backend="nccl")
 
     world_size = dist.get_world_size() if dist.is_initialized() else 1
 
     dna_tokenizer = NucleotideTokenizer()
 
     train_masked_language_dataset = PoissonSpanMaskingDataset(
-        source=GenomeSliceSource(
-            genomes_directory=Path("temp/data/external/sequences/nucleotides"),
+        source=GenomeSliceSource[dict[str, str]](
+            genomes_directory=Path("temp/scaled/raw/nucleotides"),
             metadata_source=Path(
-                "temp/data/processed/pretraining/bacteria.gene.pre_training.parquet"
+                "temp/scaled/interim/bacteria.gene.pre_training.parquet"
             ),
             key_column="genomic_nucleotide_accession.version",
             start_column="start_position_on_the_genomic_accession",
@@ -40,34 +40,18 @@ def main():
         ),
         tokenizer=dna_tokenizer,
         sequence_column="dna_sequence",
-        maximum_sequence_length=1536,
+        maximum_sequence_length=2048,
         static_sequence_length=False,
+        expected_span=12.0,
     )
 
-    val_masked_language_dataset = PoissonSpanMaskingDataset(
-        source=GenomeSliceSource(
-            genomes_directory=Path("temp/data/external/sequences/nucleotides"),
-            metadata_source=Path(
-                "temp/data/processed/finetuning/fold_0/val/bacteria.gene.fine_tuning.parquet"
-            ),
-            key_column="genomic_nucleotide_accession.version",
-            start_column="start_position_on_the_genomic_accession",
-            end_column="end_position_on_the_genomic_accession",
-            sequence_column="dna_sequence",
-        ),
-        tokenizer=dna_tokenizer,
-        sequence_column="dna_sequence",
-        maximum_sequence_length=1536,
-        static_sequence_length=False,
-    )
-
-    embedding_dimension = 384
+    embedding_dimension = 512
     encoder = TransformerEncoder(
         model_dimension=embedding_dimension,
         number_of_layers=embedding_dimension // 32,
         number_of_heads=embedding_dimension // 64,
-        feed_forward_dimension=(embedding_dimension * 8) // 3,
-        positional_encoder=CachedRotaryPositionalEncoding(dimension=64, base=10_000),
+        feed_forward_dimension=embedding_dimension * 4,
+        positional_encoder=CachedRotaryPositionalEncoding(dimension=64, base=50_000),
     )
 
     dna_embedding = nn.Embedding(
@@ -92,8 +76,8 @@ def main():
 
     criterion = nn.CrossEntropyLoss(ignore_index=-100)
 
-    batch_size = 16
-    accumulation_steps = 48
+    batch_size = 32
+    accumulation_steps = 32
     epochs = 5
     learning_rate_adam = 3e-4
     learning_rate_muon = 0.02
@@ -106,14 +90,6 @@ def main():
         drop_last=True,
     )
 
-    val_sampler = torch.utils.data.DistributedSampler(
-        val_masked_language_dataset,
-        num_replicas=world_size,
-        rank=dist.get_rank(),
-        shuffle=False,
-        drop_last=True,
-    )
-
     train_dataloader = torch.utils.data.DataLoader(
         train_masked_language_dataset,
         batch_size=batch_size,
@@ -121,15 +97,6 @@ def main():
         sampler=train_sampler,
         pin_memory=True,
         collate_fn=train_masked_language_dataset.collate,
-    )
-
-    val_dataloader = torch.utils.data.DataLoader(
-        val_masked_language_dataset,
-        batch_size=batch_size,
-        num_workers=6,
-        sampler=val_sampler,
-        pin_memory=True,
-        collate_fn=val_masked_language_dataset.collate,
     )
 
     batches_per_epoch = len(train_dataloader)
@@ -209,17 +176,10 @@ def main():
 
     for epoch in range(epochs):
         train_sampler.set_epoch(epoch)
-        val_sampler.set_epoch(epoch)
-
         if engine.is_main_process:
             Console.info(f"Training Epoch {epoch + 1}/{epochs}")
         state = orchestrator.run(
             dataloader=train_dataloader, state=state, is_training=True
-        )
-        if engine.is_main_process:
-            Console.info(f"Validation after epoch {epoch + 1}/{epochs}")
-        state = orchestrator.run(
-            dataloader=val_dataloader, state=state, is_training=False
         )
 
     if dist.is_initialized():

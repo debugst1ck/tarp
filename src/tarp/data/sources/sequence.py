@@ -10,6 +10,7 @@ import polars as pl
 import torch
 from Bio import SeqIO
 from torch import Tensor
+from tqdm.auto import tqdm
 
 from tarp.typed.core import KnownT
 
@@ -242,5 +243,75 @@ class GenomeSliceSource[RowT: Mapping[str, KnownT]](SequenceDataSource[RowT]):
             sequence = full_sequence
         else:
             sequence = full_sequence[start : end + 1]
+
+        return cast(RowT, {**row, self.sequence_column: sequence})
+
+
+@final
+class PretrainingCorpusSource[RowT: Mapping[str, KnownT]](SequenceDataSource[RowT]):
+    def __init__(
+        self,
+        genomes_directory: Path,
+        maximum_sequence_length: int = 1024,
+        overlap: int = 512,
+    ):
+        # Read through the firectory get all record lengths
+        self.genomes_directory = genomes_directory
+        step = maximum_sequence_length - overlap
+
+        if step <= 0:
+            raise ValueError(
+                "maximum_sequence_length must be strictly greater than overlap."
+            )
+
+        # We need to cut the records into chunks of maximum_sequence_length and overlap
+        # For instance a record of length 3000 with maximum_sequence_length=1024 and overlap=512 would be cut into:
+        # 0-1023, 512-1535, 1024-2047, 1536-2559, 2048-3063 (Really 2048-2999)
+        # Then we store it as a metadata for GenomeSliceSource to read
+        chunks = []
+        for fasta_file in tqdm(genomes_directory.glob("*.fasta"), leave=False):
+            file_name = fasta_file.name
+            with open(fasta_file) as handle:
+                for rec in SeqIO.parse(handle, "fasta"):
+                    length = len(rec.seq)
+                    for start in range(0, length, step):
+                        end = min(start + maximum_sequence_length, length)
+                        chunks.append((file_name, rec.id, start, end))
+
+        self.metadata = pl.DataFrame(
+            chunks,
+            schema=["file_name", "record_id", "start", "end"],
+            orient="row",
+        )
+
+        # Remove chunks to save memory
+        del chunks
+
+    @property
+    @override
+    def height(self) -> int:
+        return self.metadata.height
+
+    @lru_cache(maxsize=32)
+    def _load_fasta_records(self, file_name: str) -> dict[str, str]:
+        path = self.genomes_directory / file_name
+        records = {}
+        with open(path) as handle:
+            for rec in SeqIO.parse(handle, "fasta"):
+                records[rec.id] = str(rec.seq)
+        return records
+
+    @override
+    def retrieve(self, index: int) -> RowT:
+        row = self.metadata.row(index, named=True)
+        file_name = cast(str, row["file_name"])
+        record_id = cast(str, row["record_id"])
+        start = int(row["start"])
+        end = int(row["end"])
+
+        fasta_map = self._load_fasta_records(file_name)
+        full_sequence = fasta_map[record_id]
+
+        sequence = full_sequence[start:end]
 
         return cast(RowT, {**row, self.sequence_column: sequence})

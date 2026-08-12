@@ -34,7 +34,6 @@ class ProgressBar[ResultT: Result](Plugin[ResultT]):
             total=size,
             desc=desc,
             unit="batch",
-            ascii="░▒█",
             colour=color,
             dynamic_ncols=True,
             disable=not runtime.is_main_process,
