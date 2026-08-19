@@ -24,6 +24,7 @@ dependencies = [
     "torcheval",                # PyTorch model evaluation
     "iterative-stratification", # Multilabel classification utilities
     "pydantic-settings",        # Settings management
+    "odyssey",                  # Custom library for TARP
 ]
 
 [project.scripts]
@@ -32,3 +33,12 @@ tarp = "tarp.app:main"
 [project.urls]
 repository = "https://github.com/debugst1ck/tarp"
 issues = "https://github.com/debugst1ck/tarp/issues"
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+odyssey = { workspace = true }
+
+[tool.uv.workspace]
+members = ["lib/odyssey"]

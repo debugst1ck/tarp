@@ -1,0 +1,3 @@
+[submodule "lib/odyssey"]
+	path = lib/odyssey
+	url = https://github.com/debugst1ck/odyssey.git
