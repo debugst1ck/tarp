@@ -29,53 +29,6 @@ dependencies = [
 [project.scripts]
 tarp = "tarp.app:main"
 
-[tool.uv]
-package = true
-
 [project.urls]
 repository = "https://github.com/debugst1ck/tarp"
 issues = "https://github.com/debugst1ck/tarp/issues"
-
-[[tool.uv.index]]
-name = "pytorch-cu130"
-url = "https://download.pytorch.org/whl/cu130"
-explicit = true
-
-[tool.uv.sources]
-torch = [
-  { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-
-[dependency-groups]
-dev = ["ruff", "pytest"]
-jupyter = ["ipykernel", "nbformat", "ipywidgets"]
-plmarg = ["xgboost"]
-
-[tool.ruff]
-line-length = 88
-indent-width = 4
-
-[tool.ruff.lint]
-select = ["E4", "E7", "E9", "F"]
-
-[tool.ruff.format]
-docstring-code-format = true
-quote-style = "double"
-
-# Pytest in the tests/ directory and subdirectories
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "--maxfail=5"
-
-[tool.basedpyright]
-reportMissingTypeStubs = false
-venvPath = "."
-venv = ".venv"
-extraPaths = ["src"]
-exclude = [
-    "temp/data/external/nucleotides/",
-]
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
