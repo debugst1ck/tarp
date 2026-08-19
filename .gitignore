@@ -1,31 +1,16 @@
-# Python cache files pyc, pyo
-*.py[cod]
-
 # Environment files
 *.env
 
 # Temporary files
 temp/
 
-# Ignore logs
-logs/
-
-# Build files
-build/
-
-# Egg and wheel files
-*.egg-info/
-
-# __pycache__ directories
+# Python-generated files
 __pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
 
-# All hidden directories and their contents
-.venv/
-.idea/
-.vscode/
-.zed/
-.cache/
-.pytest_cache/
-
-# Lock files
-*.lock
+# Virtual environments
+.venv
