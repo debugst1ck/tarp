@@ -39,9 +39,9 @@ def main():
 
     train_masked_language_dataset = PoissonSpanMaskingDataset(
         source=GenomeSliceSource[dict[str, str]](
-            genomes_directory=Path("temp/scaled/raw/nucleotides"),
+            genomes_directory=Path("temp/data/external/nucleotides"),
             metadata_source=Path(
-                "temp/scaled/interim/bacteria.gene.pre_training.parquet"
+                "temp/data/processed/pre_training/bacteria.gene.pre_training.parquet"
             ),
             key_column="genomic_nucleotide_accession.version",
             start_column="start_position_on_the_genomic_accession",
@@ -61,7 +61,7 @@ def main():
         number_of_layers=embedding_dimension // 32,
         number_of_heads=embedding_dimension // 64,
         feed_forward_dimension=embedding_dimension * 4,
-        positional_encoder=CachedRotaryPositionalEncoding(dimension=64, base=50_000),
+        positional_encoder=CachedRotaryPositionalEncoding(dimension=64, base=10_000),
     )
 
     dna_embedding = nn.Embedding(
@@ -92,7 +92,7 @@ def main():
     learning_rate_adam = 3e-4
     learning_rate_muon = 0.02
 
-    train_sampler = torch.utils.data.DistributedSampler(
+    train_sampler = torch.utils.data.DistributedSampler[LanguageBatch](
         train_masked_language_dataset,
         num_replicas=world_size,
         rank=dist.get_rank(),

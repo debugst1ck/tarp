@@ -5,17 +5,27 @@ from typing import override
 import numpy as np
 import polars as pl
 import torch
+from odyssey import (
+    AcceleratedCompute,
+    BatchTelemetry,
+    DefaultIteration,
+    DefaultObjective,
+    EpochTelemetry,
+    Orchestrator,
+    Phase,
+    Plugin,
+)
 from sklearn.metrics import classification_report
 from torch import Tensor
 from torch.utils.data import DataLoader
 from xgboost import XGBClassifier
 
-from odyssey import MonoRuntime, Orchestrator, Plugin, RuntimeHandle, State
 from tarp.data.datasets.classification.multilabel import MultiLabelClassificationDataset
 from tarp.data.sources.sequence import TabularSequenceSource
 from tarp.model.backbone.core import Encoder
 from tarp.model.backbone.pretrained.esm1b import Esm1bEncoder
 from tarp.preprocessing.tokenizers.pretrained.esm1b import Esm1bTokenizer
+from tarp.training.plugins.tui import ProgressBar
 from tarp.typed.batch import ClassificationBatch
 
 
@@ -26,7 +36,9 @@ class ExtractionResult:
     labels: Tensor
 
 
-class EmbeddingExtractionObjective:
+class EmbeddingExtractionObjective(
+    DefaultObjective[Encoder, ClassificationBatch, ExtractionResult]
+):
     def preprocess(
         self, batch: ClassificationBatch, device: torch.device
     ) -> tuple[Tensor, Tensor, Tensor]:
@@ -49,21 +61,27 @@ class EmbeddingExtractionObjective:
             labels=labels,
         )
 
+    @override
     def forward_pass(
-        self, model: Encoder, batch: ClassificationBatch, device: torch.device
+        self, model: Encoder, *, batch: ClassificationBatch, device: torch.device
     ) -> ExtractionResult:
         seq, mask, labels = self.preprocess(batch, device)
         return self.compute(model, seq, mask, labels)
 
 
-class EmbeddingAccumulatorPlugin(Plugin[ExtractionResult]):
+class EmbeddingAccumulatorPlugin[ModelT: Encoder](
+    Plugin[ModelT, EmbeddingExtractionObjective, ClassificationBatch, ExtractionResult]
+):
     def __init__(self) -> None:
         self.embeddings: list[np.ndarray] = []
         self.labels: list[np.ndarray] = []
 
     @override
     def on_epoch_begin(
-        self, state: State, is_training: bool, size: int, runtime: RuntimeHandle
+        self,
+        _telemetry: EpochTelemetry[
+            ModelT, EmbeddingExtractionObjective, ClassificationBatch, ExtractionResult
+        ],
     ) -> None:
         self.embeddings.clear()
         self.labels.clear()
@@ -71,14 +89,13 @@ class EmbeddingAccumulatorPlugin(Plugin[ExtractionResult]):
     @override
     def on_batch_end(
         self,
-        state: State,
-        result: ExtractionResult,
-        is_training: bool,
-        runtime: RuntimeHandle,
+        _telemetry: BatchTelemetry[
+            ModelT, EmbeddingExtractionObjective, ClassificationBatch, ExtractionResult
+        ],
+        _result: ExtractionResult,
     ) -> None:
-        # Move to host memory and cast to numpy arrays
-        self.embeddings.append(result.embedding.cpu().numpy())
-        self.labels.append(result.labels.cpu().numpy())
+        self.embeddings.append(_result.embedding.cpu().numpy())
+        self.labels.append(_result.labels.cpu().numpy())
 
     def get_dataset(self) -> tuple[np.ndarray, np.ndarray]:
         return np.vstack(self.embeddings), np.vstack(self.labels)
@@ -87,9 +104,6 @@ class EmbeddingAccumulatorPlugin(Plugin[ExtractionResult]):
 def main():
     tokenizer = Esm1bTokenizer()
     encoder = Esm1bEncoder().freeze()
-    engine = MonoRuntime(encoder)
-
-    torch.set_float32_matmul_precision("high")
 
     label_columns = [
         c
@@ -135,16 +149,20 @@ def main():
         num_workers=4,
     )
 
-    accumulator = EmbeddingAccumulatorPlugin()
+    accumulator = EmbeddingAccumulatorPlugin[Esm1bEncoder]()
     orchestrator = Orchestrator(
-        runtime=engine,
+        compute=AcceleratedCompute((encoder,)),
         objective=EmbeddingExtractionObjective(),
-        optimizers=(),  # Null iterable passed: no optimization steps occur
-        plugins=(accumulator,),
+        phases=(
+            Phase(
+                DefaultIteration(),
+                optimizers=(),
+            ),
+        ),
+        plugins=(accumulator, ProgressBar()),
     )
 
-    state_train = State()
-    _ = orchestrator.run(train_loader, state_train, is_training=False)
+    orchestrator.run(train_loader, is_training=False)
     X_train, Y_train = accumulator.get_dataset()
 
     print(f"Training dataset shape: {X_train.shape}, {Y_train.shape}")
@@ -157,8 +175,7 @@ def main():
 
     print("Evaluating XGBoost classifier on frozen ESM embeddings...")
 
-    state_test = State()
-    _ = orchestrator.run(test_loader, state_test, is_training=False)
+    orchestrator.run(test_loader, is_training=False)
     X_test, Y_test = accumulator.get_dataset()
 
     print(f"Test dataset shape: {X_test.shape}, {Y_test.shape}")
@@ -167,11 +184,7 @@ def main():
 
     Y_pred = classifier.predict(X_test)
     print("XGBoost Classification Report:")
-    print(
-        classification_report(
-            Y_test, Y_pred, zero_division=0.0, target_names=label_columns
-        )
-    )
+    print(classification_report(Y_test, Y_pred, target_names=label_columns))
 
 
 if __name__ == "__main__":

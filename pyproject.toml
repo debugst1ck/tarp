@@ -24,6 +24,7 @@ dependencies = [
     "torcheval",                # PyTorch model evaluation
     "iterative-stratification", # Multilabel classification utilities
     "pydantic-settings",        # Settings management
+    "xgboost",                  # Gradient boosting
     "odyssey",                  # Custom library for TARP
 ]
 
