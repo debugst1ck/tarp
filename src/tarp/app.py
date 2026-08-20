@@ -2,10 +2,16 @@ import math
 from pathlib import Path
 
 import torch
+from odyssey import (
+    DefaultIteration,
+    DistributedDataParallelCompute,
+    Orchestrator,
+    Phase,
+    Plugin,
+)
 from torch import distributed as dist
 from torch import nn
 
-from odyssey import DistributedDataParallelRuntime, Orchestrator, State
 from tarp.cli.core import Console
 from tarp.data.datasets.language.masked import PoissonSpanMaskingDataset
 from tarp.data.sources.sequence import GenomeSliceSource
@@ -13,10 +19,14 @@ from tarp.model.backbone.untrained.transformer import TransformerEncoder
 from tarp.model.layers.positional.rotational import CachedRotaryPositionalEncoding
 from tarp.model.tasks.language import LanguageModel
 from tarp.preprocessing.tokenizers.atomic.monomer import NucleotideTokenizer
-from tarp.training.objectives.language.masked import MaskedLanguageModelingObjective
+from tarp.training.objectives.language.masked import (
+    LanguageModelResults,
+    MaskedLanguageModelingObjective,
+)
 from tarp.training.plugins.checkpointing import CheckpointOnEnd
 from tarp.training.plugins.scheduling import BatchLearningScheduling
 from tarp.training.plugins.tui import ProgressBar
+from tarp.typed.batch import LanguageBatch
 
 
 def main():
@@ -66,8 +76,8 @@ def main():
         vocabulary_size=dna_tokenizer.vocabulary_size,
     )
 
-    engine = DistributedDataParallelRuntime(
-        model=language_model,
+    engine = DistributedDataParallelCompute(
+        models=(language_model,),
         mixed_precision=True,
         mixed_precision_dtype=torch.bfloat16
         if torch.accelerator.is_available() and torch.cuda.is_bf16_supported()
@@ -108,7 +118,7 @@ def main():
     muon_parameters: list[nn.Parameter] = []
     adam_parameters: list[nn.Parameter] = []
 
-    for name, param in engine.model.named_parameters():
+    for name, param in engine.models[0].named_parameters():
         if not param.requires_grad:
             continue
 
@@ -153,34 +163,43 @@ def main():
         milestones=[warmup_steps],
     )
 
+    plugins: list[
+        Plugin[
+            LanguageModel,
+            MaskedLanguageModelingObjective,
+            LanguageBatch,
+            LanguageModelResults,
+        ]
+    ] = [
+        BatchLearningScheduling(schedulers=(adam_scheduler, muon_scheduler)),
+        CheckpointOnEnd(path=Path("temp/checkpoints/checkpoint_lm.safetensors")),
+        ProgressBar(),
+    ]
     orchestrator = Orchestrator(
-        runtime=engine,
+        compute=engine,
         objective=MaskedLanguageModelingObjective(
             criterion=criterion,
         ),
-        optimizers=(adam, muon),
-        plugins=[
-            BatchLearningScheduling(schedulers=(adam_scheduler, muon_scheduler)),
-            CheckpointOnEnd(path=Path("temp/checkpoints/checkpoint_lm.safetensors")),
-            ProgressBar(),
-        ],
+        phases=(
+            Phase(
+                DefaultIteration[LanguageModel, LanguageBatch, LanguageModelResults](),
+                optimizers=(adam, muon),
+            ),
+        ),
+        plugins=plugins,
         accumulation_steps=accumulation_steps,
     )
 
     if engine.is_main_process:
         Console.debug(
-            f"Trainable parameters: {sum(p.numel() for p in engine.model.parameters() if p.requires_grad):,}"
+            f"Trainable parameters: {sum(p.numel() for p in engine.models[0].parameters() if p.requires_grad):,}"
         )
-
-    state = State()
 
     for epoch in range(epochs):
         train_sampler.set_epoch(epoch)
         if engine.is_main_process:
             Console.info(f"Training Epoch {epoch + 1}/{epochs}")
-        state = orchestrator.run(
-            dataloader=train_dataloader, state=state, is_training=True
-        )
+        orchestrator.run(dataloader=train_dataloader, is_training=True)
 
     if dist.is_initialized():
         dist.destroy_process_group()

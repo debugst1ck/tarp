@@ -2,9 +2,9 @@ from dataclasses import dataclass
 from typing import final, override
 
 import torch
+from odyssey import DefaultObjective
 from torch import Tensor, nn
 
-from odyssey import Objective
 from tarp.model.tasks.language import LanguageModel
 from tarp.typed.batch import LanguageBatch
 
@@ -18,7 +18,7 @@ class LanguageModelResults:
 
 @final
 class MaskedLanguageModelingObjective(
-    Objective[LanguageModel, LanguageBatch, LanguageModelResults]
+    DefaultObjective[LanguageModel, LanguageBatch, LanguageModelResults]
 ):
     def __init__(self, criterion: nn.Module | None = None) -> None:
         super().__init__()
@@ -48,7 +48,7 @@ class MaskedLanguageModelingObjective(
 
     @override
     def forward_pass(
-        self, model: LanguageModel, batch: LanguageBatch, device: torch.device
+        self, model: LanguageModel, *, batch: LanguageBatch, device: torch.device
     ) -> LanguageModelResults:
         sequence, attention_mask, truth = self.preprocess(batch, device)
         return self.compute(model, sequence, attention_mask, truth)

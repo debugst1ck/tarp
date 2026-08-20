@@ -1,27 +1,29 @@
-from collections.abc import Iterable
+from collections.abc import Sequence
 from typing import final, override
 
-from torch import nn
+from odyssey import (
+    Plugin,
+    StepTelemetry,
+)
 from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
-
-from odyssey import Plugin, Result, RuntimeHandle, State
 
 
 @final
-class BatchLearningScheduling[ResultT: Result](Plugin[ResultT]):
-    def __init__(
-        self,
-        schedulers: Iterable[LRScheduler],
-    ) -> None:
+class BatchLearningScheduling[*ModelsTs, ObjectiveT, BatchT, ResultT](
+    Plugin[*ModelsTs, ObjectiveT, BatchT, ResultT]
+):
+    def __init__(self, schedulers: Sequence[LRScheduler]) -> None:
+        super().__init__()
         self.schedulers = schedulers
-
         for scheduler in self.schedulers:
             if isinstance(scheduler, ReduceLROnPlateau):
-                raise ValueError(
+                raise TypeError(
                     "BatchLearningScheduling does not support ReduceLROnPlateau. Use EpochLearningScheduling instead."
                 )
 
     @override
-    def on_optimizer_step(self, state: State, runtime: RuntimeHandle) -> None:
+    def on_optimizer_step(
+        self, _telemetry: StepTelemetry[*ModelsTs, ObjectiveT, BatchT, ResultT]
+    ) -> None:
         for scheduler in self.schedulers:
             scheduler.step()

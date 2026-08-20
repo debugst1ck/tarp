@@ -1,18 +1,25 @@
 from pathlib import Path
 from typing import final, override
 
-from odyssey import Plugin, Result, RuntimeHandle, State
+import torch
+from odyssey import (
+    EpochTelemetry,
+    Plugin,
+)
 
 
 @final
-class CheckpointOnEnd[ResultT: Result](Plugin[ResultT]):
+class CheckpointOnEnd[*ModelsTs, ObjectiveT, BatchT, ResultT](
+    Plugin[*ModelsTs, ObjectiveT, BatchT, ResultT]
+):
     def __init__(self, path: Path) -> None:
         super().__init__()
         self._path = path
 
     @override
     def on_epoch_end(
-        self, state: State, is_training: bool, runtime: RuntimeHandle
+        self, _telemetry: EpochTelemetry[*ModelsTs, ObjectiveT, BatchT, ResultT]
     ) -> None:
-        if is_training:
-            runtime.checkpoint(self._path)
+        if _telemetry.is_training and _telemetry.handle.is_main_process:
+            for state_dict in _telemetry.handle.state_dicts():
+                torch.save(state_dict, self._path)

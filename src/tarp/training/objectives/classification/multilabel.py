@@ -2,9 +2,9 @@ from dataclasses import dataclass
 from typing import final, override
 
 import torch
+from odyssey import DefaultObjective
 from torch import Tensor, nn
 
-from odyssey import Objective
 from tarp.model.tasks.classification import ClassificationModel
 from tarp.typed.batch import ClassificationBatch
 
@@ -18,7 +18,7 @@ class ClassificationResults:
 
 @final
 class MultiLabelClassificationObjective(
-    Objective[ClassificationModel, ClassificationBatch, ClassificationResults]
+    DefaultObjective[ClassificationModel, ClassificationBatch, ClassificationResults]
 ):
     def __init__(self, criterion: nn.Module | None) -> None:
         super().__init__()
@@ -52,6 +52,7 @@ class MultiLabelClassificationObjective(
     def forward_pass(
         self,
         model: ClassificationModel,
+        *,
         batch: ClassificationBatch,
         device: torch.device,
     ) -> ClassificationResults:
