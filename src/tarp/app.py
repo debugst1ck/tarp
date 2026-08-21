@@ -86,7 +86,7 @@ def main():
 
     criterion = nn.CrossEntropyLoss(ignore_index=-100)
 
-    batch_size = 32
+    batch_size = 16
     accumulation_steps = 32
     epochs = 5
     learning_rate_adam = 3e-4
@@ -103,7 +103,7 @@ def main():
     train_dataloader = torch.utils.data.DataLoader(
         train_masked_language_dataset,
         batch_size=batch_size,
-        num_workers=6,
+        num_workers=4,
         sampler=train_sampler,
         pin_memory=True,
         collate_fn=train_masked_language_dataset.collate,
