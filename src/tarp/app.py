@@ -87,7 +87,7 @@ def main():
     criterion = nn.CrossEntropyLoss(ignore_index=-100)
 
     batch_size = 16
-    accumulation_steps = 32
+    accumulation_steps = 64
     epochs = 5
     learning_rate_adam = 3e-4
     learning_rate_muon = 0.02
