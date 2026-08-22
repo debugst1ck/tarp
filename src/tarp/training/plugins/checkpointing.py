@@ -1,11 +1,11 @@
 from pathlib import Path
 from typing import final, override
 
-import torch
 from odyssey import (
     EpochTelemetry,
     Plugin,
 )
+from safetensors.torch import save_file
 
 
 @final
@@ -22,4 +22,4 @@ class CheckpointOnEnd[*ModelsTs, ObjectiveT, BatchT, ResultT](
     ) -> None:
         if _telemetry.is_training and _telemetry.handle.is_main_process:
             for state_dict in _telemetry.handle.state_dicts():
-                torch.save(state_dict, self._path)
+                save_file(state_dict, self._path)
