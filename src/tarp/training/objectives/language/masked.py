@@ -32,7 +32,6 @@ class MaskedLanguageModelingObjective(
         truth = batch["truth"].to(device, non_blocking=True)
         return sequence, attention_mask, truth
 
-    @torch.compile(mode="max-autotune-no-cudagraphs")
     def compute(
         self,
         model: LanguageModel,

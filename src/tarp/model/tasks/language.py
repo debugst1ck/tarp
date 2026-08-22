@@ -2,7 +2,6 @@ from typing import final, override
 
 from torch import Tensor, nn
 
-from tarp.cli.core import Console
 from tarp.model.backbone.core import Encoder
 
 
