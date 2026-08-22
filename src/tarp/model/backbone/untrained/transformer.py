@@ -76,7 +76,7 @@ class TransformerEncoder(Encoder):
         self.model_dimension = model_dimension
         self.adaptive_receptive_field = AdaptiveReceptiveField1D(
             model_dimension=model_dimension,
-            kernel_sizes=(3, 5, 7, 9, 11),
+            kernel_sizes=(3, 7, 11),
             bias=False,
             dropout=dropout,
         )
