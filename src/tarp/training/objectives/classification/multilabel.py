@@ -32,7 +32,7 @@ class MultiLabelClassificationObjective(
         labels = batch["labels"].to(device, non_blocking=True)
         return sequence, attention_mask, labels
 
-    @torch.compile(mode="max-autotune-no-cudagraphs")
+    @torch.compile
     def compute(
         self,
         model: ClassificationModel,

@@ -32,6 +32,7 @@ class MaskedLanguageModelingObjective(
         truth = batch["truth"].to(device, non_blocking=True)
         return sequence, attention_mask, truth
 
+    @torch.compile
     def compute(
         self,
         model: LanguageModel,
