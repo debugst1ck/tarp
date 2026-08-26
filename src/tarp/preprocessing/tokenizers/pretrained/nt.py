@@ -7,13 +7,17 @@ from tarp.preprocessing.tokenizers.core import Tokenizer
 
 
 @final
-class Esm1bTokenizer(Tokenizer):
-    def __init__(self, name: str = "facebook/esm1b_t33_650M_UR50S"):
-        self.tokenizer = AutoTokenizer.from_pretrained(name, trust_remote_code=True)
+class NucleotideTransformerV3Tokenizer(Tokenizer):
+    def __init__(self, name: str = "InstaDeepAI/NTv3_650M_pre"):
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            name, trust_remote_code=True, padding_side="right"
+        )
 
     @override
     def encode(self, text: str) -> Tensor:
-        return self.tokenizer(text, return_tensors="pt")["input_ids"].squeeze(0)
+        return self.tokenizer(text, return_tensors="pt", add_special_tokens=False)[
+            "input_ids"
+        ].squeeze(0)
 
     @override
     def decode(self, tokens: Tensor) -> str:

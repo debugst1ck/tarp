@@ -8,7 +8,7 @@ from tarp.preprocessing.tokenizers.core import Tokenizer
 
 @final
 class GenomeOceanTokenizer(Tokenizer):
-    def __init__(self, name="DOEJGI/GenomeOcean-500M"):
+    def __init__(self, name: str = "DOEJGI/GenomeOcean-500M"):
         self.tokenizer = AutoTokenizer.from_pretrained(
             name, trust_remote_code=True, padding_side="right"
         )
