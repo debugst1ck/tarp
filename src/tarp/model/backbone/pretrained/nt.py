@@ -1,7 +1,7 @@
 from typing import Literal, overload, override
 
 from torch import Tensor
-from transformers import AutoModel
+from transformers import AutoConfig, AutoModel
 
 from tarp.model.backbone.core import Encoder
 from tarp.model.layers.pooling.atomic import GlobalAveragePooling1D
@@ -12,7 +12,13 @@ class NucleotideTransformerV2Encoder(Encoder):
         self, name: str = "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"
     ):
         super().__init__()
-        self.model = AutoModel.from_pretrained(name, trust_remote_code=True)
+        config = AutoConfig.from_pretrained(name, trust_remote_code=True)
+        if not hasattr(config, "rope_theta"):
+            config.rope_theta = 10000.0
+
+        self.model = AutoModel.from_pretrained(
+            name, config=config, trust_remote_code=True
+        )
         self.pooling = GlobalAveragePooling1D()
         self.model_dimension = self.model.config.hidden_size
 
