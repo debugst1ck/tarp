@@ -24,8 +24,8 @@ from xgboost import XGBClassifier
 from tarp.data.datasets.classification.multilabel import MultiLabelClassificationDataset
 from tarp.data.sources.sequence import TabularSequenceSource
 from tarp.model.backbone.core import Encoder
-from tarp.model.backbone.pretrained.nt import NucleotideTransformerV3Encoder
-from tarp.preprocessing.tokenizers.pretrained.nt import NucleotideTransformerV3Tokenizer
+from tarp.model.backbone.pretrained.nt import NucleotideTransformerV2Encoder
+from tarp.preprocessing.tokenizers.pretrained.nt import NucleotideTransformerV2Tokenizer
 from tarp.training.plugins.tui import ProgressBar
 from tarp.typed.batch import ClassificationBatch
 
@@ -103,8 +103,8 @@ class EmbeddingAccumulatorPlugin[ModelT: Encoder](
 
 
 def main():
-    tokenizer = NucleotideTransformerV3Tokenizer()
-    encoder = NucleotideTransformerV3Encoder().freeze()  # Freeze the encoder weights
+    tokenizer = NucleotideTransformerV2Tokenizer()
+    encoder = NucleotideTransformerV2Encoder().freeze()  # Freeze the encoder weights
 
     label_columns = [
         c
@@ -150,7 +150,7 @@ def main():
         num_workers=4,
     )
 
-    accumulator = EmbeddingAccumulatorPlugin[NucleotideTransformerV3Encoder]()
+    accumulator = EmbeddingAccumulatorPlugin[NucleotideTransformerV2Encoder]()
     orchestrator = Orchestrator(
         compute=AcceleratedCompute((encoder,)),
         objective=EmbeddingExtractionObjective(),

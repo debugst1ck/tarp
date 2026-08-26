@@ -7,8 +7,10 @@ from tarp.preprocessing.tokenizers.core import Tokenizer
 
 
 @final
-class NucleotideTransformerV3Tokenizer(Tokenizer):
-    def __init__(self, name: str = "InstaDeepAI/NTv3_650M_pre"):
+class NucleotideTransformerV2Tokenizer(Tokenizer):
+    def __init__(
+        self, name: str = "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"
+    ):
         self.tokenizer = AutoTokenizer.from_pretrained(
             name, trust_remote_code=True, padding_side="right"
         )

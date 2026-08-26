@@ -7,8 +7,10 @@ from tarp.model.backbone.core import Encoder
 from tarp.model.layers.pooling.atomic import GlobalAveragePooling1D
 
 
-class NucleotideTransformerV3Encoder(Encoder):
-    def __init__(self, name: str = "InstaDeepAI/NTv3_650M_pre"):
+class NucleotideTransformerV2Encoder(Encoder):
+    def __init__(
+        self, name: str = "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"
+    ):
         super().__init__()
         self.model = AutoModel.from_pretrained(name, trust_remote_code=True)
         self.pooling = GlobalAveragePooling1D()
@@ -60,9 +62,8 @@ class NucleotideTransformerV3Encoder(Encoder):
             input_ids=sequence_embeddings,
             attention_mask=attention_mask,
             output_hidden_states=False,
-            return_dict=True,
         )
-        hidden = outputs.hidden_states[-1]  # [B, L, D]
+        hidden = outputs["hidden_states"][-1]  # [B, L, D]
         pooled = self.pooling(hidden, attention_mask)  # [B, D]
         match mode:
             case "sequence":
