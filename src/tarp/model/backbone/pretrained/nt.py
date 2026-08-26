@@ -13,8 +13,12 @@ class NucleotideTransformerV2Encoder(Encoder):
     ):
         super().__init__()
         config = AutoConfig.from_pretrained(name, trust_remote_code=True)
-        if not hasattr(config, "rope_theta"):
-            config.rope_theta = 10000.0
+
+        # Inject attributes because Esm NTv2 rely on them being present in the config object
+        config.rope_theta = getattr(config, "rope_theta", 10000.0)
+        config.is_decoder = getattr(config, "is_decoder", False)
+        config.add_cross_attention = getattr(config, "add_cross_attention", False)
+        config.tie_word_embeddings = getattr(config, "tie_word_embeddings", True)
 
         self.model = AutoModel.from_pretrained(
             name, config=config, trust_remote_code=True
