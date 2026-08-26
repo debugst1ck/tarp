@@ -19,6 +19,7 @@ from sklearn.metrics import classification_report
 from sklearn.neighbors import KNeighborsClassifier
 from torch import Tensor
 from torch.utils.data import DataLoader
+from xgboost import XGBClassifier
 
 from tarp.data.datasets.classification.multilabel import MultiLabelClassificationDataset
 from tarp.data.sources.sequence import TabularSequenceSource
@@ -48,7 +49,7 @@ class EmbeddingExtractionObjective(
         labels = batch["labels"].to(device, non_blocking=True)
         return seq, mask, labels
 
-    @torch.compile(mode="max-autotune-no-cudagraphs")
+    @torch.compile
     def compute(
         self, model: Encoder, seq: Tensor, mask: Tensor, labels: Tensor
     ) -> ExtractionResult:
@@ -165,14 +166,14 @@ def main():
     orchestrator.run(train_loader, is_training=False)
     X_train, Y_train = accumulator.get_dataset()
     print(f"Training dataset shape: {X_train.shape}, {Y_train.shape}")
-    knn = KNeighborsClassifier(n_neighbors=5, metric="cosine", n_jobs=-1).fit(
-        X_train, Y_train
-    )
+    classifier = XGBClassifier(
+        n_estimators=200, max_depth=7, objective="binary:logistic", learning_rate=0.1
+    ).fit(X_train, Y_train)
     orchestrator.run(test_loader, is_training=False)
     X_test, Y_test = accumulator.get_dataset()
     print(f"Test dataset shape: {X_test.shape}, {Y_test.shape}")
     print("Generating classification report for test dataset...")
-    Y_pred = knn.predict(X_test)
+    Y_pred = classifier.predict(X_test)
     print(classification_report(Y_test, Y_pred, target_names=label_columns))
 
 

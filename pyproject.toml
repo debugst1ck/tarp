@@ -25,6 +25,7 @@ dependencies = [
     "iterative-stratification", # Multilabel classification utilities
     "pydantic-settings",        # Settings management
     "xgboost",                  # Gradient boosting
+    "pyrefly",                  # Typing and language server
     "odyssey",                  # Custom library for TARP
 ]
 

@@ -48,7 +48,7 @@ class EmbeddingExtractionObjective(
         labels = batch["labels"].to(device, non_blocking=True)
         return seq, mask, labels
 
-    @torch.compile(mode="max-autotune-no-cudagraphs")
+    @torch.compile
     def compute(
         self, model: Encoder, seq: Tensor, mask: Tensor, labels: Tensor
     ) -> ExtractionResult:

@@ -14,3 +14,7 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Editor directories and files
+.vscode/
+.zed/
