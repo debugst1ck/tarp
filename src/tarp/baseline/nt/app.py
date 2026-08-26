@@ -16,7 +16,6 @@ from odyssey import (
     Plugin,
 )
 from sklearn.metrics import classification_report
-from sklearn.neighbors import KNeighborsClassifier
 from torch import Tensor
 from torch.utils.data import DataLoader
 from xgboost import XGBClassifier
