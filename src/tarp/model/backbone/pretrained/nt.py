@@ -1,7 +1,7 @@
 from typing import Literal, overload, override
 
 from torch import Tensor
-from transformers import AutoConfig, AutoModel
+from transformers import AutoConfig, AutoModelForMaskedLM
 
 from tarp.model.backbone.core import Encoder
 from tarp.model.layers.pooling.atomic import GlobalAveragePooling1D
@@ -20,7 +20,7 @@ class NucleotideTransformerV2Encoder(Encoder):
         config.add_cross_attention = getattr(config, "add_cross_attention", False)
         config.tie_word_embeddings = getattr(config, "tie_word_embeddings", True)
 
-        self.model = AutoModel.from_pretrained(
+        self.model = AutoModelForMaskedLM.from_pretrained(
             name, config=config, trust_remote_code=True
         )
         self.pooling = GlobalAveragePooling1D()
