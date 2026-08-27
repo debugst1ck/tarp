@@ -49,6 +49,13 @@ PreTrainedModel.all_tied_weights_keys = property(
     _get_all_tied_weights_keys, _set_all_tied_weights_keys
 )
 
+if not hasattr(PreTrainedModel, "get_head_mask"):
+
+    def get_head_mask(self, head_mask, num_hidden_layers, is_attention_chunked=False):
+        return head_mask
+
+    PreTrainedModel.get_head_mask = get_head_mask
+
 
 class NucleotideTransformerV2Encoder(Encoder):
     def __init__(
