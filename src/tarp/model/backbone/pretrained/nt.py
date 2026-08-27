@@ -120,7 +120,7 @@ class NucleotideTransformerV2Encoder(Encoder):
         outputs = self.model(
             input_ids=sequence_embeddings,
             attention_mask=attention_mask,
-            output_hidden_states=False,
+            output_hidden_states=True,
         )
         hidden = outputs["hidden_states"][-1]  # [B, L, D]
         pooled = self.pooling(hidden, attention_mask)  # [B, D]
