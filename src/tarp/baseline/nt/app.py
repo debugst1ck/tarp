@@ -16,9 +16,9 @@ from odyssey import (
     Plugin,
 )
 from sklearn.metrics import classification_report
+from sklearn.neighbors import KNeighborsClassifier
 from torch import Tensor
 from torch.utils.data import DataLoader
-from xgboost import XGBClassifier
 
 from tarp.data.datasets.classification.multilabel import MultiLabelClassificationDataset
 from tarp.data.sources.sequence import TabularSequenceSource
@@ -165,9 +165,7 @@ def main():
     orchestrator.run(train_loader, is_training=False)
     X_train, Y_train = accumulator.get_dataset()
     print(f"Training dataset shape: {X_train.shape}, {Y_train.shape}")
-    classifier = XGBClassifier(
-        n_estimators=200, max_depth=7, objective="binary:logistic", learning_rate=0.1
-    ).fit(X_train, Y_train)
+    classifier = KNeighborsClassifier(n_neighbors=2).fit(X_train, Y_train)
     orchestrator.run(test_loader, is_training=False)
     X_test, Y_test = accumulator.get_dataset()
     print(f"Test dataset shape: {X_test.shape}, {Y_test.shape}")
